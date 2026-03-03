@@ -15,6 +15,7 @@ import type {
   LikeEvent,
   ReportEvent,
   BlockEvent,
+  TreatmentGroup,
 } from "@/lib/types"
 
 export function useChat() {
@@ -107,10 +108,14 @@ export function useChat() {
   })
 
   // Start session
-  const startSession = async (token: string, name: string) => {
-    const data = await apiStartSession(token, name)
+  const startSession = async (
+    token: string,
+    name: string,
+    treatmentGroup?: TreatmentGroup,
+  ) => {
+    const data = await apiStartSession(token, name, treatmentGroup)
     setSessionId(data.session_id)
-    setCurrentUser(name || token || "user")
+    setCurrentUser(name || token || treatmentGroup || "user")
     if (name) setUsername(name)
   }
 

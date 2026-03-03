@@ -1,16 +1,31 @@
 import { API_BASE } from "./constants"
-import type { SessionStartResponse } from "./types"
+import type {
+  SessionStartResponse,
+  SessionStartRequestPayload,
+  TreatmentGroup,
+} from "./types"
 
 export async function startSession(
   token: string,
   username?: string,
+  treatmentGroup?: TreatmentGroup,
 ): Promise<SessionStartResponse> {
+  const payload: SessionStartRequestPayload = {
+    username: username || undefined,
+  }
+
+  if (treatmentGroup) {
+    payload.treatment_group = treatmentGroup
+  } else {
+    payload.token = token
+  }
+
   const res = await fetch(`${API_BASE}/session/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token, username: username || undefined }),
+    body: JSON.stringify(payload),
   })
-  if (!res.ok) throw new Error("Invalid token")
+  if (!res.ok) throw new Error("Invalid token or treatment")
   return res.json()
 }
 

@@ -1,11 +1,28 @@
 "use client"
 
 import { useState } from "react"
+import type { TreatmentGroup } from "@/lib/types"
 
 interface LoginScreenProps {
   initialUsername: string
-  onStart: (token: string, username: string) => Promise<void>
+  onStart: (
+    token: string,
+    username: string,
+    treatmentGroup?: TreatmentGroup,
+  ) => Promise<void>
 }
+
+const TREATMENT_OPTIONS: { value: TreatmentGroup; label: string }[] = [
+  { value: "low_against", label: "Low incivility · Majority against" },
+  { value: "low_mixed", label: "Low incivility · Mixed" },
+  { value: "low_favor", label: "Low incivility · Majority in favor" },
+  { value: "medium_against", label: "Medium incivility · Majority against" },
+  { value: "medium_mixed", label: "Medium incivility · Mixed" },
+  { value: "medium_favor", label: "Medium incivility · Majority in favor" },
+  { value: "high_against", label: "High incivility · Majority against" },
+  { value: "high_mixed", label: "High incivility · Mixed" },
+  { value: "high_favor", label: "High incivility · Majority in favor" },
+]
 
 export default function LoginScreen({
   initialUsername,
@@ -15,18 +32,21 @@ export default function LoginScreen({
   const [username, setUsername] = useState(initialUsername)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const [devMode, setDevMode] = useState(false)
+  const [selectedTreatment, setSelectedTreatment] =
+    useState<TreatmentGroup>("low_against")
 
   const handleSubmit = async () => {
-    if (!token.trim()) {
+    if (!devMode && !token.trim()) {
       setError("Please enter a token")
       return
     }
     setLoading(true)
     setError("")
     try {
-      await onStart(token.trim(), username.trim())
+      await onStart(token.trim(), username.trim(), devMode ? selectedTreatment : undefined)
     } catch {
-      setError("Invalid token. Please try again.")
+      setError(devMode ? "Invalid treatment config. Please try again." : "Invalid token. Please try again.")
       setLoading(false)
     }
   }
@@ -56,6 +76,38 @@ export default function LoginScreen({
 
         {/* Form */}
         <div className="px-6 py-5 space-y-3">
+          <label className="flex items-center gap-2 text-xs font-medium text-secondary">
+            <input
+              type="checkbox"
+              checked={devMode}
+              onChange={(e) => setDevMode(e.target.checked)}
+            />
+            Researcher test mode (manual treatment)
+          </label>
+
+          {devMode && (
+            <div>
+              <label
+                htmlFor="treatment"
+                className="block text-xs font-medium text-secondary mb-1"
+              >
+                Treatment (test mode)
+              </label>
+              <select
+                id="treatment"
+                value={selectedTreatment}
+                onChange={(e) => setSelectedTreatment(e.target.value as TreatmentGroup)}
+                className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm text-primary focus:outline-none focus:border-header focus:ring-1 focus:ring-header/30 transition-colors"
+              >
+                {TREATMENT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div>
             <label
               htmlFor="username"
@@ -90,7 +142,8 @@ export default function LoginScreen({
               }}
               onKeyDown={handleKeyDown}
               placeholder="e.g. user0002"
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm text-primary focus:outline-none focus:border-header focus:ring-1 focus:ring-header/30 transition-colors placeholder:text-secondary/50"
+              disabled={devMode}
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm text-primary focus:outline-none focus:border-header focus:ring-1 focus:ring-header/30 transition-colors placeholder:text-secondary/50 disabled:bg-gray-100 disabled:text-secondary/60"
               autoFocus
             />
           </div>
