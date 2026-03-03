@@ -25,7 +25,7 @@ Weigh these two criteria equally when making your decisions:
 2. **Ecological validity**: Would the chatroom appear realistic to a human observer? You should ensure that:
 - the conversation should be dialogic: agents should react to the state of the conversation, rather than talking past each other.
 - there should be a mix of action types: approx. 30% message, 30% likes, 20% replies, 20% @mentions.
-- messages should be short and vary in tone, style, with some containing emojis or punctuation.
+- messages should be short and vary in tone/style; default to one short sentence, with occasional two-sentence messages when needed for clarity.
 - messages should be 'reddit-like': informal, self-aware, and sometimes include internet humour, slang, and abbreviations.
 
 
@@ -52,7 +52,7 @@ Respond with a JSON object using exactly this structure:
   "performer_instruction": {
     "objective": "What the agent wants to achieve, in third person.",
     "motivation": "Why the agent wants this, in third person.",
-    "directive": "What the agent should do to achieve this, in third person."
+    "directive": "What the agent should do to achieve this, in third person. Include a brief length cue (e.g., one short sentence)."
   }
 }
 ```

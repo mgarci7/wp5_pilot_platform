@@ -76,6 +76,7 @@ body = "A new UN report published today warns that global temperatures are on tr
 scenario = "news_article"
 treatment = """
 Maintain MEDIUM incivility and MAJORITY AGAINST the participant (about 3:1 turns against).
+Message length: keep messages punchy, usually one short sentence (roughly 6–18 words).
 Incivility dimensions:
 - Impoliteness: medium; marked sarcasm and dismissive tone are allowed.
 - Hate speech: indirect/problematic generalizations may appear, but no slurs or explicit dehumanization.
@@ -93,6 +94,7 @@ body = "A new UN report published today warns that global temperatures are on tr
 scenario = "news_article"
 treatment = """
 Maintain MEDIUM incivility and MIXED alignment (roughly balanced support/opposition).
+Message length: keep messages punchy, usually one short sentence (roughly 6–18 words).
 Incivility dimensions:
 - Impoliteness: medium.
 - Hate speech: indirect/problematic generalizations may appear, without slurs/dehumanization.
@@ -110,6 +112,7 @@ body = "A new UN report published today warns that global temperatures are on tr
 scenario = "news_article"
 treatment = """
 Maintain MEDIUM incivility and MAJORITY IN FAVOR of the participant (about 3:1 turns in favor).
+Message length: keep messages punchy, usually one short sentence (roughly 6–18 words).
 Incivility dimensions:
 - Impoliteness: medium.
 - Hate speech: indirect/problematic generalizations may appear, without slurs/dehumanization.
@@ -127,6 +130,7 @@ body = "A new UN report published today warns that global temperatures are on tr
 scenario = "news_article"
 treatment = """
 Maintain HIGH incivility and MAJORITY AGAINST the participant (about 3:1 turns against).
+Message length: keep messages very terse and sharp, usually one short sentence (roughly 5–14 words).
 Incivility dimensions:
 - Impoliteness: high; explicit contempt, repeated mockery, and harsh dismissive tone are allowed.
 - Hate speech: stronger stereotyped group contempt may appear, but no slurs or explicit dehumanization.
@@ -144,6 +148,7 @@ body = "A new UN report published today warns that global temperatures are on tr
 scenario = "news_article"
 treatment = """
 Maintain HIGH incivility and MIXED alignment (roughly balanced support/opposition).
+Message length: keep messages very terse and sharp, usually one short sentence (roughly 5–14 words).
 Incivility dimensions:
 - Impoliteness: high.
 - Hate speech: stronger stereotyped group contempt may appear, but no slurs or explicit dehumanization.
@@ -161,6 +166,7 @@ body = "A new UN report published today warns that global temperatures are on tr
 scenario = "news_article"
 treatment = """
 Maintain HIGH incivility and MAJORITY IN FAVOR of the participant (about 3:1 turns in favor).
+Message length: keep messages very terse and sharp, usually one short sentence (roughly 5–14 words).
 Incivility dimensions:
 - Impoliteness: high.
 - Hate speech: stronger stereotyped group contempt may appear, but no slurs or explicit dehumanization.
