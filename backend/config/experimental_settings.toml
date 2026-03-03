@@ -25,6 +25,8 @@ The participant has posted an opinion about a news article. The Director must pr
 scenario = "news_article"
 treatment = """
 Maintain LOW incivility and MAJORITY AGAINST the participant (about 3:1 turns against).
+Agent composition: 4/5 agents mostly disagree with the participant; 1/5 mostly agrees.
+Incivility-by-agent profile: 1/5 agents can be mildly incivil; 4/5 should remain mostly civil.
 Incivility dimensions:
 - Impoliteness: low; disagreement can be firm but respectful.
 - Hate speech: none. No dehumanization, no slurs, no group-targeted contempt.
@@ -42,6 +44,8 @@ body = "A new UN report published today warns that global temperatures are on tr
 scenario = "news_article"
 treatment = """
 Maintain LOW incivility and MIXED alignment (roughly balanced support/opposition).
+Agent composition: 2/5 agents mostly agree, 2/5 mostly disagree, 1/5 can alternate by context.
+Incivility-by-agent profile: 1/5 agents can be mildly incivil; 4/5 should remain mostly civil.
 Incivility dimensions:
 - Impoliteness: low.
 - Hate speech: none.
@@ -59,6 +63,8 @@ body = "A new UN report published today warns that global temperatures are on tr
 scenario = "news_article"
 treatment = """
 Maintain LOW incivility and MAJORITY IN FAVOR of the participant (about 3:1 turns in favor).
+Agent composition: 4/5 agents mostly agree with the participant; 1/5 mostly disagrees.
+Incivility-by-agent profile: 1/5 agents can be mildly incivil; 4/5 should remain mostly civil.
 Incivility dimensions:
 - Impoliteness: low.
 - Hate speech: none.
@@ -76,6 +82,8 @@ body = "A new UN report published today warns that global temperatures are on tr
 scenario = "news_article"
 treatment = """
 Maintain MEDIUM incivility and MAJORITY AGAINST the participant (about 3:1 turns against).
+Agent composition: 4/5 agents mostly disagree with the participant; 1/5 mostly agrees.
+Incivility-by-agent profile: 3/5 agents should be recurrently incivil; 2/5 should stay moderate.
 Message length: keep messages punchy, usually one short sentence (roughly 6–18 words).
 Incivility dimensions:
 - Impoliteness: medium; marked sarcasm and dismissive tone are allowed.
@@ -94,6 +102,8 @@ body = "A new UN report published today warns that global temperatures are on tr
 scenario = "news_article"
 treatment = """
 Maintain MEDIUM incivility and MIXED alignment (roughly balanced support/opposition).
+Agent composition: 2/5 agents mostly agree, 2/5 mostly disagree, 1/5 can alternate by context.
+Incivility-by-agent profile: 3/5 agents should be recurrently incivil; 2/5 should stay moderate.
 Message length: keep messages punchy, usually one short sentence (roughly 6–18 words).
 Incivility dimensions:
 - Impoliteness: medium.
@@ -112,6 +122,8 @@ body = "A new UN report published today warns that global temperatures are on tr
 scenario = "news_article"
 treatment = """
 Maintain MEDIUM incivility and MAJORITY IN FAVOR of the participant (about 3:1 turns in favor).
+Agent composition: 4/5 agents mostly agree with the participant; 1/5 mostly disagrees.
+Incivility-by-agent profile: 3/5 agents should be recurrently incivil; 2/5 should stay moderate.
 Message length: keep messages punchy, usually one short sentence (roughly 6–18 words).
 Incivility dimensions:
 - Impoliteness: medium.
@@ -130,6 +142,8 @@ body = "A new UN report published today warns that global temperatures are on tr
 scenario = "news_article"
 treatment = """
 Maintain HIGH incivility and MAJORITY AGAINST the participant (about 3:1 turns against).
+Agent composition: 4/5 agents mostly disagree with the participant; 1/5 mostly agrees.
+Incivility-by-agent profile: 4/5 agents should be consistently incivil; 1/5 can remain less incivil.
 Message length: keep messages very terse and sharp, usually one short sentence (roughly 5–14 words).
 Incivility dimensions:
 - Impoliteness: high; explicit contempt, repeated mockery, and harsh dismissive tone are allowed.
@@ -148,6 +162,8 @@ body = "A new UN report published today warns that global temperatures are on tr
 scenario = "news_article"
 treatment = """
 Maintain HIGH incivility and MIXED alignment (roughly balanced support/opposition).
+Agent composition: 2/5 agents mostly agree, 2/5 mostly disagree, 1/5 can alternate by context.
+Incivility-by-agent profile: 4/5 agents should be consistently incivil; 1/5 can remain less incivil.
 Message length: keep messages very terse and sharp, usually one short sentence (roughly 5–14 words).
 Incivility dimensions:
 - Impoliteness: high.
@@ -166,6 +182,8 @@ body = "A new UN report published today warns that global temperatures are on tr
 scenario = "news_article"
 treatment = """
 Maintain HIGH incivility and MAJORITY IN FAVOR of the participant (about 3:1 turns in favor).
+Agent composition: 4/5 agents mostly agree with the participant; 1/5 mostly disagrees.
+Incivility-by-agent profile: 4/5 agents should be consistently incivil; 1/5 can remain less incivil.
 Message length: keep messages very terse and sharp, usually one short sentence (roughly 5–14 words).
 Incivility dimensions:
 - Impoliteness: high.
