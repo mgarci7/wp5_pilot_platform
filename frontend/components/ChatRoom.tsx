@@ -39,6 +39,8 @@ interface ChatRoomProps {
   ) => void
   // Username for mention insertion
   username: string
+  // Session controls
+  leaveChat: () => void
 }
 
 export default function ChatRoom({
@@ -60,6 +62,7 @@ export default function ChatRoom({
   performReport,
   contextMenu,
   setContextMenu,
+  leaveChat,
 }: ChatRoomProps) {
   const handleContextMenu = useCallback(
     (msg: Message, x: number, y: number) => {
@@ -76,6 +79,7 @@ export default function ChatRoom({
       <ChatHeader
         participantCount={participants.length}
         isConnected={isConnected}
+        onLeaveChat={leaveChat}
       />
 
       <MessageFeed

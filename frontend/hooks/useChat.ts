@@ -119,6 +119,18 @@ export function useChat() {
     if (name) setUsername(name)
   }
 
+  const leaveChat = () => {
+    setSessionId(null)
+    setMessages([])
+    setCurrentUser(null)
+    setReplyTo(null)
+    setInputValue("")
+    setContextMenu(null)
+    setReportModalOpen(false)
+    setReportTarget(null)
+    setBlockedSenders({})
+  }
+
   // Send message
   const sendMessage = () => {
     if (!inputValue.trim()) return
@@ -294,6 +306,7 @@ export function useChat() {
     setUsername,
     currentUser,
     startSession,
+    leaveChat,
     // Connection
     isConnected,
     // Messages
