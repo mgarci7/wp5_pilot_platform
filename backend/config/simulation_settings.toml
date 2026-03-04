@@ -54,3 +54,5 @@ moderator_top_p = 1.0
 context_window_size = 10
 # - llm_concurrency_limit: per-process limit of concurrent LLM requests (must be a positive integer > 0)
 llm_concurrency_limit = 5
+# - llm_request_timeout_seconds: timeout per LLM call; prevents hung providers from stalling a turn (float, 0 to disable)
+llm_request_timeout_seconds = 45
