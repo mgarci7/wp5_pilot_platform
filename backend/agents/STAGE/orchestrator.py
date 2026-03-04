@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional, List
+from time import perf_counter
 
 from models import Message, Agent
 from utils import Logger
@@ -68,6 +69,21 @@ class Orchestrator:
 
         Returns a TurnResult on success, or None if the cycle fails.
         """
+        turn_start = perf_counter()
+
+        def _log_diag(status: str, reason: str, extra: Optional[dict] = None) -> None:
+            payload = {
+                "status": status,
+                "reason": reason,
+                "elapsed_seconds": round(perf_counter() - turn_start, 3),
+            }
+            if extra:
+                payload.update(extra)
+            try:
+                self.logger.log_event("turn_diagnostics", payload)
+            except Exception:
+                pass
+
         # 1. Gather recent messages and available agents
         recent = self.state.get_recent_messages(self.context_window_size)
         agents = self.state.agents
@@ -86,6 +102,7 @@ class Orchestrator:
             chatroom_context=self.chatroom_context,
         )
         director_raw = None
+        director_started = perf_counter()
         try:
             director_raw = await self.director_llm.generate_response(
                 director_user_prompt, max_retries=1,
@@ -102,8 +119,14 @@ class Orchestrator:
             response=director_raw,
             error=None if director_raw else "Director LLM returned no response",
         )
+        _log_diag(
+            status="stage",
+            reason="director_completed",
+            extra={"stage": "director", "duration_seconds": round(perf_counter() - director_started, 3)},
+        )
 
         if not director_raw:
+            _log_diag(status="failed", reason="director_no_response")
             return None
 
         # 3. Parse the Director's JSON response
@@ -111,6 +134,7 @@ class Orchestrator:
             director_data = parse_director_response(director_raw)
         except ValueError as e:
             self.logger.log_error("director_parse", str(e))
+            _log_diag(status="failed", reason="director_parse_error")
             return None
 
         action_type = director_data["action_type"]
@@ -122,10 +146,12 @@ class Orchestrator:
         # Validate that the chosen agent exists
         if not any(a.name == agent_name for a in agents):
             self.logger.log_error("director_agent", f"Director chose unknown agent: '{agent_name}'")
+            _log_diag(status="failed", reason="director_unknown_agent", extra={"agent_name": agent_name})
             return None
 
         # 4. Handle 'like' actions (no Performer call needed)
         if action_type == "like":
+            _log_diag(status="ok", reason="like_action", extra={"agent_name": agent_name})
             return TurnResult(
                 action_type="like",
                 agent_name=agent_name,
@@ -158,6 +184,7 @@ class Orchestrator:
         for attempt in range(1, MAX_PERFORMER_RETRIES + 1):
             # 5a. Call the Performer
             performer_raw = None
+            performer_started = perf_counter()
             try:
                 performer_raw = await self.performer_llm.generate_response(
                     performer_user_prompt, max_retries=1,
@@ -172,6 +199,16 @@ class Orchestrator:
                 response=performer_raw,
                 error=None if performer_raw else f"Performer LLM returned no response (attempt {attempt}/{MAX_PERFORMER_RETRIES})",
             )
+            _log_diag(
+                status="stage",
+                reason="performer_attempt_completed",
+                extra={
+                    "stage": "performer",
+                    "attempt": attempt,
+                    "duration_seconds": round(perf_counter() - performer_started, 3),
+                    "has_response": bool(performer_raw),
+                },
+            )
 
             if not performer_raw:
                 continue
@@ -183,6 +220,7 @@ class Orchestrator:
             )
 
             moderator_raw = None
+            moderator_started = perf_counter()
             try:
                 moderator_raw = await self.moderator_llm.generate_response(
                     moderator_user_prompt, max_retries=1,
@@ -196,6 +234,16 @@ class Orchestrator:
                 prompt=f"[SYSTEM]\n{self._moderator_system_prompt}\n\n[USER]\n{moderator_user_prompt}",
                 response=moderator_raw,
                 error=None if moderator_raw else f"Moderator LLM returned no response (attempt {attempt}/{MAX_PERFORMER_RETRIES})",
+            )
+            _log_diag(
+                status="stage",
+                reason="moderator_attempt_completed",
+                extra={
+                    "stage": "moderator",
+                    "attempt": attempt,
+                    "duration_seconds": round(perf_counter() - moderator_started, 3),
+                    "has_response": bool(moderator_raw),
+                },
             )
 
             content = parse_moderator_response(moderator_raw)
@@ -213,6 +261,7 @@ class Orchestrator:
                 "performer_retries_exhausted",
                 f"Failed to get valid performer content after {MAX_PERFORMER_RETRIES} attempts",
             )
+            _log_diag(status="failed", reason="performer_retries_exhausted")
             return None
 
         # 6. Format the output into a Message
@@ -237,6 +286,8 @@ class Orchestrator:
             quoted_text=quoted_text,
             mentions=mentions,
         )
+
+        _log_diag(status="ok", reason="message_generated", extra={"action_type": action_type, "agent_name": agent_name})
 
         return TurnResult(
             action_type=action_type,
