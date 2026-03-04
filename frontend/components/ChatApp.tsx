@@ -37,6 +37,7 @@ export default function ChatApp() {
       contextMenu={chat.contextMenu}
       setContextMenu={chat.setContextMenu}
       username={chat.username}
+      leaveChat={chat.leaveChat}
     />
   )
 }

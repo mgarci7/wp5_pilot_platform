@@ -59,7 +59,7 @@ class LLMManager:
     - delegate actual LLM calls to an injected client (selected based on config)
     """
 
-    def __init__(self, concurrency_limit: int, client: Optional[object] = None):
+    def __init__(self, concurrency_limit: int, client: Optional[object] = None, request_timeout_seconds: Optional[float] = 45.0):
         if concurrency_limit is None:
             raise RuntimeError("llm_concurrency_limit must be provided")
         try:
@@ -72,6 +72,7 @@ class LLMManager:
         self._semaphore = asyncio.Semaphore(limit)
         # LLM client should provide `generate_response_async(prompt, max_retries)`
         self.client = client
+        self.request_timeout_seconds = request_timeout_seconds
 
     @classmethod
     def from_simulation_config(cls, simulation_config: dict, client: Optional[object] = None, role: str = None):
@@ -91,7 +92,8 @@ class LLMManager:
                     client = _create_client(provider, model, temperature=temperature, top_p=top_p)
             if client is None:
                 client = _create_client_from_config(simulation_config)
-        return cls(simulation_config["llm_concurrency_limit"], client=client)
+        timeout = simulation_config.get("llm_request_timeout_seconds", 45.0)
+        return cls(simulation_config["llm_concurrency_limit"], client=client, request_timeout_seconds=timeout)
 
     async def generate_response(self, prompt: str, max_retries: int = 1, system_prompt: str = None) -> Optional[str]:
         """Acquire concurrency slot and delegate to the LLM client's async generator.
@@ -103,14 +105,22 @@ class LLMManager:
             # `generate_response_async(prompt, max_retries, system_prompt)` returning Optional[str].
             try:
                 # type: ignore[attr-defined]
-                return await self.client.generate_response_async(prompt, max_retries=max_retries, system_prompt=system_prompt)
+                response_coro = self.client.generate_response_async(prompt, max_retries=max_retries, system_prompt=system_prompt)
+                if self.request_timeout_seconds and float(self.request_timeout_seconds) > 0:
+                    return await asyncio.wait_for(response_coro, timeout=float(self.request_timeout_seconds))
+                return await response_coro
             except AttributeError:
                 # Fallback: maybe client only exposes sync API
                 # run the sync call in a threadpool
                 import asyncio as _asyncio
 
                 loop = _asyncio.get_running_loop()
-                return await loop.run_in_executor(None, lambda: self.client.generate_response(prompt, max_retries=max_retries, system_prompt=system_prompt))
+                sync_call = lambda: self.client.generate_response(prompt, max_retries=max_retries, system_prompt=system_prompt)
+                if self.request_timeout_seconds and float(self.request_timeout_seconds) > 0:
+                    return await asyncio.wait_for(loop.run_in_executor(None, sync_call), timeout=float(self.request_timeout_seconds))
+                return await loop.run_in_executor(None, sync_call)
+            except (asyncio.TimeoutError, TimeoutError):
+                return None
             except Exception:
                 return None
 

@@ -1,4 +1,5 @@
 import asyncio
+import os
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -68,8 +69,9 @@ class SessionStartRequest(BaseModel):
     `username` is optional for the prototype UI which supplies only a token.
     When omitted, the token string will be used as the display name.
     """
-    token: str  # single-use participant token (validated against config/participant_tokens.toml)
+    token: Optional[str] = None  # single-use participant token (validated against config/participant_tokens.toml)
     username: Optional[str] = None
+    treatment_group: Optional[str] = None  # optional manual override for researcher/dev testing
 
 class SessionStartResponse(BaseModel):
     """Response model for session start."""
@@ -110,19 +112,33 @@ async def start_session(request: SessionStartRequest):
     """
     global active_session
     
-    # Generate session ID up-front and atomically consume the participant token
-    # using the same session_id so logs reference the same session identifier.
+    allow_override = os.getenv("ALLOW_TREATMENT_OVERRIDE", "false").lower() in {"1", "true", "yes", "on"}
+
+    # Generate session ID up-front and determine treatment group.
+    # In normal operation, group assignment comes from single-use tokens.
+    # In researcher/dev mode (ALLOW_TREATMENT_OVERRIDE=true), callers may
+    # manually provide `treatment_group` for deterministic testing.
     session_id = str(uuid.uuid4())
-    group = token_manager.consume_token(request.token, session_id=session_id)
-    if not group:
-        # Either invalid or already used
-        raise HTTPException(status_code=401, detail="Invalid or already-used token")
+    group = None
+    if allow_override and request.treatment_group:
+        group_map = experimental_settings.get("groups", {}) if isinstance(experimental_settings, dict) else {}
+        if request.treatment_group not in group_map:
+            raise HTTPException(status_code=400, detail="Unknown treatment_group")
+        group = request.treatment_group
+    else:
+        token = (request.token or "").strip()
+        if not token:
+            raise HTTPException(status_code=400, detail="Token is required")
+        group = token_manager.consume_token(token, session_id=session_id)
+        if not group:
+            # Either invalid or already used
+            raise HTTPException(status_code=401, detail="Invalid or already-used token")
 
     # Reserve pending session with treatment group
     # Store requested username/handle to be attached to the session when websocket connects
     # If the client didn't provide a username, fall back to the token string so
     # the frontend can start sessions by submitting only a token.
-    user_name = request.username or request.token
+    user_name = request.username or request.token or "user"
     await session_manager.reserve_pending(session_id, {"treatment_group": group, "user_name": user_name})
 
     # Return session id and confirmation message

@@ -50,3 +50,21 @@ export interface SessionStartResponse {
 }
 
 export type BlockedSenders = Record<string, string>
+
+
+export type TreatmentGroup =
+  | "low_against"
+  | "low_mixed"
+  | "low_favor"
+  | "medium_against"
+  | "medium_mixed"
+  | "medium_favor"
+  | "high_against"
+  | "high_mixed"
+  | "high_favor"
+
+export interface SessionStartRequestPayload {
+  token?: string
+  username?: string
+  treatment_group?: TreatmentGroup
+}

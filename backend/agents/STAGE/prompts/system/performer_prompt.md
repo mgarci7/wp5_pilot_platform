@@ -18,8 +18,9 @@ Your job is to produce a short message that fulfills this direction, whilst also
 ## Style
 
 Your message must read like a real post in an informal online chatroom:
-- Keep it short — one to three short sentences at most.
+- Keep it very short — usually one sentence, never more than two short sentences.
 - Write in a 'reddit-like' register: informal, self-aware, and dialogic. Use internet speak, abbreviations, and humour where it fits the direction.
+- Prefer concise outputs (roughly 6–20 words). Only go longer if clarity absolutely requires it.
 
 Underneath the Director's Instructions, you will find specific instructions for how to generate the message based on the type of action the Director has chosen for you.
 

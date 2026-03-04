@@ -9,79 +9,190 @@
 #
 # `scenario` selects experiment-specific lifecycle behaviour (seed content,
 # agent gating, etc.).  Available scenarios: "base", "news_article".
-#
-# For "news_article" scenarios, add a [groups.<name>.seed] sub-table:
-#   type     = "news_article"
-#   headline = "..."
-#   source   = "..."
-#   body     = "..."
 ############################################################
 
-
 # ── Shared chatroom context ─────────────────────────────────
-# Injected into the Director prompt before the treatment description.
-# Describes the platform, geographic locale, language, demographic, etc.
 chatroom_context = """
-This is a Spanish-language chatroom on Telegram, based in Spain.  Messages should be written in Spanish.
+This is a Spanish-language chatroom on Telegram, based in Spain. Messages must be written in Spanish.
+The participant has posted an opinion about a news article. The Director must preserve the assigned treatment condition.
 """
 
+# ── Shared article seed for all groups ─────────────────────
 
-# ── Shared seed article ─────────────────────────────────────
-# All groups use the same news-article scenario. The article is
-# displayed at the top of the chatroom; agents remain idle until
-# the human participant posts their first message.
+# ── 9-cell design: incivility (low/medium/high) x alignment (against/mixed/favor) ──
 
-
-# ── Treatment 1: uncivil + support position ─────────────────
-
-[groups.uncivil_support]
+[groups.low_against]
 scenario = "news_article"
 treatment = """
-This chat is characterised by incivility: agents resort to ad hominem attacks, disparagement of others' character or motivations, derogatory and dismissive language, mockery and insults. Arguments tend to be personal rather than substantive. The intensity varies across agents — some are openly aggressive, others are more sarcastic, backhanded, or passively dismissive. Not every message needs to be uncivil; some can be brief, neutral, or substantive. The group generally supports the position expressed by the human participant — most agents share or reinforce their stance, although not unanimously."""
+Maintain LOW incivility and MAJORITY AGAINST the participant (about 3:1 turns against).
+Agent composition: 4/5 agents mostly disagree with the participant; 1/5 mostly agrees.
+Incivility-by-agent profile: 1/5 agents can be mildly incivil; 4/5 should remain mostly civil.
+Incivility dimensions:
+- Impoliteness: low; disagreement can be firm but respectful.
+- Hate speech: none. No dehumanization, no slurs, no group-targeted contempt.
+- Threats to democratic freedoms: none. Do not delegitimize elections or justify authoritarian restrictions.
+Safety: no physical threats, no incitement to violence.
+"""
 
-[groups.uncivil_support.seed]
+[groups.low_against.seed]
 type = "news_article"
 headline = "A climate report warns that 2°C will be exceeded before 2030"
 source = "Reuters"
 body = "A new UN report published today warns that global temperatures are on track to exceed the critical 2°C warming threshold before the end of the decade, much sooner than previously anticipated. The report calls for immediate and drastic reductions in greenhouse gas emissions."
 
-
-# ── Treatment 2: uncivil + oppose position ─────────────────
-
-[groups.uncivil_oppose]
+[groups.low_mixed]
 scenario = "news_article"
 treatment = """
-This chat is characterised by incivility: agents resort to ad hominem attacks, disparagement of others' character or motivations, derogatory and dismissive language, mockery and insults. Arguments tend to be personal rather than substantive. The intensity varies across agents — some are openly aggressive, others are more sarcastic, backhanded, or passively dismissive. Not every message needs to be uncivil; some can be brief, neutral, or substantive. The group generally opposes the position expressed by the human participant — most agents question or contradict their stance, although not unanimously."""
+Maintain LOW incivility and MIXED alignment (roughly balanced support/opposition).
+Agent composition: 2/5 agents mostly agree, 2/5 mostly disagree, 1/5 can alternate by context.
+Incivility-by-agent profile: 1/5 agents can be mildly incivil; 4/5 should remain mostly civil.
+Incivility dimensions:
+- Impoliteness: low.
+- Hate speech: none.
+- Threats to democratic freedoms: none.
+Safety: no physical threats, no incitement to violence.
+"""
 
-[groups.uncivil_oppose.seed]
+[groups.low_mixed.seed]
 type = "news_article"
 headline = "A climate report warns that 2°C will be exceeded before 2030"
 source = "Reuters"
 body = "A new UN report published today warns that global temperatures are on track to exceed the critical 2°C warming threshold before the end of the decade, much sooner than previously anticipated. The report calls for immediate and drastic reductions in greenhouse gas emissions."
 
-
-# ── Treatment 3: civil + support position ─────────────────
-
-[groups.civil_support]
+[groups.low_favor]
 scenario = "news_article"
 treatment = """
-This chat is characterised by respectful discourse: agents address the content of others' arguments, acknowledge different perspectives, and express disagreement through reasoning rather than personal attacks. The group generally supports the position expressed by the human participant — most agents share or reinforce their stance, although not unanimously."""
+Maintain LOW incivility and MAJORITY IN FAVOR of the participant (about 3:1 turns in favor).
+Agent composition: 4/5 agents mostly agree with the participant; 1/5 mostly disagrees.
+Incivility-by-agent profile: 1/5 agents can be mildly incivil; 4/5 should remain mostly civil.
+Incivility dimensions:
+- Impoliteness: low.
+- Hate speech: none.
+- Threats to democratic freedoms: none.
+Safety: no physical threats, no incitement to violence.
+"""
 
-[groups.civil_support.seed]
+[groups.low_favor.seed]
 type = "news_article"
 headline = "A climate report warns that 2°C will be exceeded before 2030"
 source = "Reuters"
 body = "A new UN report published today warns that global temperatures are on track to exceed the critical 2°C warming threshold before the end of the decade, much sooner than previously anticipated. The report calls for immediate and drastic reductions in greenhouse gas emissions."
 
-
-# ── Treatment 4: civil + oppose position ────────────────
-
-[groups.civil_oppose]
+[groups.medium_against]
 scenario = "news_article"
 treatment = """
-This chat is characterised by respectful discourse: agents address the content of others' arguments, acknowledge different perspectives, and express disagreement through reasoning rather than personal attacks. The group generally opposes the position expressed by the human participant — most agents question or contradict their stance, although not unanimously."""
+Maintain MEDIUM incivility and MAJORITY AGAINST the participant (about 3:1 turns against).
+Agent composition: 4/5 agents mostly disagree with the participant; 1/5 mostly agrees.
+Incivility-by-agent profile: 3/5 agents should be recurrently incivil; 2/5 should stay moderate.
+Message length: keep messages punchy, usually one short sentence (roughly 6–18 words).
+Incivility dimensions:
+- Impoliteness: medium; marked sarcasm and dismissive tone are allowed.
+- Hate speech: indirect/problematic generalizations may appear, but no slurs or explicit dehumanization.
+- Threats to democratic freedoms: mild delegitimization and manipulation claims are allowed.
+Safety: no physical threats, no incitement to violence.
+"""
 
-[groups.civil_oppose.seed]
+[groups.medium_against.seed]
+type = "news_article"
+headline = "A climate report warns that 2°C will be exceeded before 2030"
+source = "Reuters"
+body = "A new UN report published today warns that global temperatures are on track to exceed the critical 2°C warming threshold before the end of the decade, much sooner than previously anticipated. The report calls for immediate and drastic reductions in greenhouse gas emissions."
+
+[groups.medium_mixed]
+scenario = "news_article"
+treatment = """
+Maintain MEDIUM incivility and MIXED alignment (roughly balanced support/opposition).
+Agent composition: 2/5 agents mostly agree, 2/5 mostly disagree, 1/5 can alternate by context.
+Incivility-by-agent profile: 3/5 agents should be recurrently incivil; 2/5 should stay moderate.
+Message length: keep messages punchy, usually one short sentence (roughly 6–18 words).
+Incivility dimensions:
+- Impoliteness: medium.
+- Hate speech: indirect/problematic generalizations may appear, without slurs/dehumanization.
+- Threats to democratic freedoms: mild delegitimization/manipulation claims are allowed.
+Safety: no physical threats, no incitement to violence.
+"""
+
+[groups.medium_mixed.seed]
+type = "news_article"
+headline = "A climate report warns that 2°C will be exceeded before 2030"
+source = "Reuters"
+body = "A new UN report published today warns that global temperatures are on track to exceed the critical 2°C warming threshold before the end of the decade, much sooner than previously anticipated. The report calls for immediate and drastic reductions in greenhouse gas emissions."
+
+[groups.medium_favor]
+scenario = "news_article"
+treatment = """
+Maintain MEDIUM incivility and MAJORITY IN FAVOR of the participant (about 3:1 turns in favor).
+Agent composition: 4/5 agents mostly agree with the participant; 1/5 mostly disagrees.
+Incivility-by-agent profile: 3/5 agents should be recurrently incivil; 2/5 should stay moderate.
+Message length: keep messages punchy, usually one short sentence (roughly 6–18 words).
+Incivility dimensions:
+- Impoliteness: medium.
+- Hate speech: indirect/problematic generalizations may appear, without slurs/dehumanization.
+- Threats to democratic freedoms: mild delegitimization/manipulation claims are allowed.
+Safety: no physical threats, no incitement to violence.
+"""
+
+[groups.medium_favor.seed]
+type = "news_article"
+headline = "A climate report warns that 2°C will be exceeded before 2030"
+source = "Reuters"
+body = "A new UN report published today warns that global temperatures are on track to exceed the critical 2°C warming threshold before the end of the decade, much sooner than previously anticipated. The report calls for immediate and drastic reductions in greenhouse gas emissions."
+
+[groups.high_against]
+scenario = "news_article"
+treatment = """
+Maintain HIGH incivility and MAJORITY AGAINST the participant (about 3:1 turns against).
+Agent composition: 4/5 agents mostly disagree with the participant; 1/5 mostly agrees.
+Incivility-by-agent profile: 4/5 agents should be consistently incivil; 1/5 can remain less incivil.
+Message length: keep messages very terse and sharp, usually one short sentence (roughly 5–14 words).
+Incivility dimensions:
+- Impoliteness: high; explicit contempt, repeated mockery, and harsh dismissive tone are allowed.
+- Hate speech: stronger stereotyped group contempt may appear, but no slurs or explicit dehumanization.
+- Threats to democratic freedoms: stronger delegitimization of elections/institutions and pro-authoritarian framing may appear.
+Safety: no physical threats, no incitement to violence.
+"""
+
+[groups.high_against.seed]
+type = "news_article"
+headline = "A climate report warns that 2°C will be exceeded before 2030"
+source = "Reuters"
+body = "A new UN report published today warns that global temperatures are on track to exceed the critical 2°C warming threshold before the end of the decade, much sooner than previously anticipated. The report calls for immediate and drastic reductions in greenhouse gas emissions."
+
+[groups.high_mixed]
+scenario = "news_article"
+treatment = """
+Maintain HIGH incivility and MIXED alignment (roughly balanced support/opposition).
+Agent composition: 2/5 agents mostly agree, 2/5 mostly disagree, 1/5 can alternate by context.
+Incivility-by-agent profile: 4/5 agents should be consistently incivil; 1/5 can remain less incivil.
+Message length: keep messages very terse and sharp, usually one short sentence (roughly 5–14 words).
+Incivility dimensions:
+- Impoliteness: high.
+- Hate speech: stronger stereotyped group contempt may appear, but no slurs or explicit dehumanization.
+- Threats to democratic freedoms: stronger delegitimization/pro-authoritarian framing may appear.
+Safety: no physical threats, no incitement to violence.
+"""
+
+[groups.high_mixed.seed]
+type = "news_article"
+headline = "A climate report warns that 2°C will be exceeded before 2030"
+source = "Reuters"
+body = "A new UN report published today warns that global temperatures are on track to exceed the critical 2°C warming threshold before the end of the decade, much sooner than previously anticipated. The report calls for immediate and drastic reductions in greenhouse gas emissions."
+
+[groups.high_favor]
+scenario = "news_article"
+treatment = """
+Maintain HIGH incivility and MAJORITY IN FAVOR of the participant (about 3:1 turns in favor).
+Agent composition: 4/5 agents mostly agree with the participant; 1/5 mostly disagrees.
+Incivility-by-agent profile: 4/5 agents should be consistently incivil; 1/5 can remain less incivil.
+Message length: keep messages very terse and sharp, usually one short sentence (roughly 5–14 words).
+Incivility dimensions:
+- Impoliteness: high.
+- Hate speech: stronger stereotyped group contempt may appear, but no slurs or explicit dehumanization.
+- Threats to democratic freedoms: stronger delegitimization/pro-authoritarian framing may appear.
+Safety: no physical threats, no incitement to violence.
+"""
+
+[groups.high_favor.seed]
 type = "news_article"
 headline = "A climate report warns that 2°C will be exceeded before 2030"
 source = "Reuters"

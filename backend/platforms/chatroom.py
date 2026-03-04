@@ -99,6 +99,7 @@ class SimulationSession:
         # Clock task and running flag
         self.clock_task: Optional[asyncio.Task] = None
         self.running = False
+        self._turn_lock = asyncio.Lock()
 
     async def start(self) -> None:
         """Start the session (launch the simulation loop)."""
@@ -145,7 +146,7 @@ class SimulationSession:
 
                 # Probability gate: should we trigger a Director->Performer turn?
                 if self._rng.random() < post_probability:
-                    await self.agent_manager.execute_turn(self.treatment)
+                    await self._execute_turn()
 
                 await asyncio.sleep(tick_interval)
 
@@ -164,6 +165,20 @@ class SimulationSession:
         message = Message.create(sender=self.state.user_name, content=content, reply_to=reply_to, quoted_text=quoted_text, mentions=mentions)
         self.state.add_message(message)
         self.logger.log_message(message.to_dict())
+
+        # React quickly after a participant message instead of waiting for the next
+        # random clock tick. If a turn is already running, skip this boost and let
+        # the regular loop continue.
+        if self.running and self.scenario.agents_active(self.state):
+            asyncio.create_task(self._execute_turn(skip_if_busy=True))
+
+    async def _execute_turn(self, skip_if_busy: bool = False) -> None:
+        """Run one Director->Performer->Moderator turn with concurrency protection."""
+        if skip_if_busy and self._turn_lock.locked():
+            return
+
+        async with self._turn_lock:
+            await self.agent_manager.execute_turn(self.treatment)
 
     async def _noop_send(self, message: dict) -> None:
         return

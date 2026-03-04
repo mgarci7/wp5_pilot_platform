@@ -1,11 +1,16 @@
 # participant_tokens.toml
 
 # Provision single-use participant tokens, grouped by treatment, by adding them below.
-# Tokens are consumed on login and logged in backend/logs/used_tokens.jsonl. They cannot be reused.  
-# The treatement group names must match those defined in experimental_settings.toml (validated at runtime).
+# Tokens are consumed on login and logged in backend/logs/used_tokens.jsonl. They cannot be reused.
+# The treatment group names must match those defined in experimental_settings.toml (validated at runtime).
 
 [groups]
-uncivil_support = ["user0001"]
-uncivil_oppose = ["user0002"]
-civil_support = ["user0003"]
-civil_oppose = ["user0004"]
+low_against = ["user0001", "test_low_against"]
+low_mixed = ["user0002", "test_low_mixed"]
+low_favor = ["user0003", "test_low_favor"]
+medium_against = ["user0004", "test_medium_against"]
+medium_mixed = ["user0005", "test_medium_mixed"]
+medium_favor = ["user0006", "test_medium_favor"]
+high_against = ["user0007", "test_high_against"]
+high_mixed = ["user0008", "test_high_mixed"]
+high_favor = ["user0009", "test_high_favor"]
