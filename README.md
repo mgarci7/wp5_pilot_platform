@@ -53,6 +53,70 @@ npm run dev
 
 Open http://localhost:300x (see reported link when starting front end) and use a token from [participant_tokens.toml](./backend/config/participant_tokens.toml) to log in. Tokens are configured by the researcher and can only be used once. Delete used_tokens.jsonl to reset tokens.
 
+
+## Modo investigador (selección manual de tratamiento)
+
+Este modo está pensado para pruebas internas (QA/research) y permite escoger manualmente uno de los grupos experimentales en el login del frontend.
+
+> En producción, mantén este modo desactivado y usa tokens de participante de un solo uso.
+
+### 1) Arranca backend con override habilitado
+
+Linux/macOS (bash):
+```bash
+cd backend
+cp .env.example .env   # si aún no existe
+# edita .env y añade tus API keys
+export ALLOW_TREATMENT_OVERRIDE=true
+python main.py
+```
+
+Windows CMD / Anaconda Prompt:
+```bat
+cd backend
+copy .env.example .env
+REM edita .env y añade tus API keys
+set ALLOW_TREATMENT_OVERRIDE=true
+python main.py
+```
+
+PowerShell:
+```powershell
+cd backend
+copy .env.example .env
+# edita .env y añade tus API keys
+$env:ALLOW_TREATMENT_OVERRIDE="true"
+python main.py
+```
+
+### 2) Arranca frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Abre la URL que muestre Next.js (normalmente `http://localhost:3000`).
+
+### 3) Entra en modo investigador desde la UI
+
+1. Marca **Researcher test mode (manual treatment)** en la pantalla de login.
+2. Elige el tratamiento en el desplegable (`low_*`, `medium_*`, `high_*`).
+3. Pulsa **Join Chat**.
+
+Si el backend no se lanzó con `ALLOW_TREATMENT_OVERRIDE=true`, el inicio de sesión manual fallará con error de configuración.
+
+### 4) Probar múltiples tratamientos en una sola sesión de navegador
+
+Dentro del chat puedes pulsar **Leave** para volver al login y entrar de nuevo con otro tratamiento, sin cerrar pestaña.
+
+### 5) Diagnóstico rápido si “no responden” los agentes
+
+- Revisa `backend/logs/<session_id>.json` y filtra eventos `turn_diagnostics`.
+- Si aparecen `director_no_response` o `has_response=false` en performer/moderator, suele ser latencia/caída del proveedor LLM.
+- Ajusta `llm_request_timeout_seconds` en `backend/config/simulation_settings.toml` para pruebas más rápidas.
+
 ## Project Structure
 
 ```
