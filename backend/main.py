@@ -63,6 +63,17 @@ except Exception as e:
 
 # Pydantic for validation at HTTP boundary
 #NOTE: this guards against malformed requests/responses
+class LLMRoleOverride(BaseModel):
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
+class LLMOverrides(BaseModel):
+    director: Optional[LLMRoleOverride] = None
+    performer: Optional[LLMRoleOverride] = None
+    moderator: Optional[LLMRoleOverride] = None
+
+
 class SessionStartRequest(BaseModel):
     """Request model for starting a session.
 
@@ -72,6 +83,7 @@ class SessionStartRequest(BaseModel):
     token: Optional[str] = None  # single-use participant token (validated against config/participant_tokens.toml)
     username: Optional[str] = None
     treatment_group: Optional[str] = None  # optional manual override for researcher/dev testing
+    llm_overrides: Optional[LLMOverrides] = None  # optional per-role model override (research/dev mode)
 
 class SessionStartResponse(BaseModel):
     """Response model for session start."""
@@ -114,6 +126,12 @@ async def start_session(request: SessionStartRequest):
     
     allow_override = os.getenv("ALLOW_TREATMENT_OVERRIDE", "false").lower() in {"1", "true", "yes", "on"}
 
+    llm_overrides_payload = None
+    if request.llm_overrides is not None:
+        if not allow_override:
+            raise HTTPException(status_code=400, detail="LLM overrides require ALLOW_TREATMENT_OVERRIDE=true")
+        llm_overrides_payload = request.llm_overrides.model_dump(exclude_none=True)
+
     # Generate session ID up-front and determine treatment group.
     # In normal operation, group assignment comes from single-use tokens.
     # In researcher/dev mode (ALLOW_TREATMENT_OVERRIDE=true), callers may
@@ -139,7 +157,7 @@ async def start_session(request: SessionStartRequest):
     # If the client didn't provide a username, fall back to the token string so
     # the frontend can start sessions by submitting only a token.
     user_name = request.username or request.token or "user"
-    await session_manager.reserve_pending(session_id, {"treatment_group": group, "user_name": user_name})
+    await session_manager.reserve_pending(session_id, {"treatment_group": group, "user_name": user_name, "llm_overrides": llm_overrides_payload})
 
     # Return session id and confirmation message
     return SessionStartResponse(
@@ -190,7 +208,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
         # Create and start a new session with the reserved treatment_group
         user_name = pending.get("user_name") or "user"
-        session = await session_manager.create_session(session_id, send_to_frontend, treatment_group=treatment_group, user_name=user_name)
+        llm_overrides = pending.get("llm_overrides") if isinstance(pending, dict) else None
+        session = await session_manager.create_session(session_id, send_to_frontend, treatment_group=treatment_group, user_name=user_name, llm_overrides=llm_overrides)
         active_session = session
     
     try:

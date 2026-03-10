@@ -16,6 +16,7 @@ import type {
   ReportEvent,
   BlockEvent,
   TreatmentGroup,
+  LLMOverrides,
 } from "@/lib/types"
 
 export function useChat() {
@@ -112,8 +113,9 @@ export function useChat() {
     token: string,
     name: string,
     treatmentGroup?: TreatmentGroup,
+    llmOverrides?: LLMOverrides,
   ) => {
-    const data = await apiStartSession(token, name, treatmentGroup)
+    const data = await apiStartSession(token, name, treatmentGroup, llmOverrides)
     setSessionId(data.session_id)
     setCurrentUser(name || token || treatmentGroup || "user")
     if (name) setUsername(name)

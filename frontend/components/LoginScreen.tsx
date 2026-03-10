@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import type { TreatmentGroup } from "@/lib/types"
+import type { LLMOverrides, TreatmentGroup } from "@/lib/types"
 
 interface LoginScreenProps {
   initialUsername: string
@@ -9,6 +9,7 @@ interface LoginScreenProps {
     token: string,
     username: string,
     treatmentGroup?: TreatmentGroup,
+    llmOverrides?: LLMOverrides,
   ) => Promise<void>
 }
 
@@ -24,6 +25,30 @@ const TREATMENT_OPTIONS: { value: TreatmentGroup; label: string }[] = [
   { value: "high_favor", label: "High incivility · Majority in favor" },
 ]
 
+type LLMOption = {
+  label: string
+  provider: string
+  model: string
+}
+
+const DIRECTOR_OPTIONS: LLMOption[] = [
+  { label: "Anthropic · Claude Opus 4.6", provider: "anthropic", model: "claude-opus-4-6" },
+  { label: "Anthropic · Claude Sonnet 4", provider: "anthropic", model: "claude-sonnet-4-0" },
+  { label: "Konstanz · ALIA 40B", provider: "konstanz", model: "BSC-LT/ALIA-40b-instruct-2601" },
+]
+
+const PERFORMER_OPTIONS: LLMOption[] = [
+  { label: "Konstanz · ALIA 40B", provider: "konstanz", model: "BSC-LT/ALIA-40b-instruct-2601" },
+  { label: "Anthropic · Claude Sonnet 4", provider: "anthropic", model: "claude-sonnet-4-0" },
+  { label: "Anthropic · Claude Haiku 4.5", provider: "anthropic", model: "claude-haiku-4-5" },
+]
+
+const MODERATOR_OPTIONS: LLMOption[] = [
+  { label: "Anthropic · Claude Haiku 4.5", provider: "anthropic", model: "claude-haiku-4-5" },
+  { label: "Anthropic · Claude Sonnet 4", provider: "anthropic", model: "claude-sonnet-4-0" },
+  { label: "Konstanz · ALIA 40B", provider: "konstanz", model: "BSC-LT/ALIA-40b-instruct-2601" },
+]
+
 export default function LoginScreen({
   initialUsername,
   onStart,
@@ -36,6 +61,22 @@ export default function LoginScreen({
   const [selectedTreatment, setSelectedTreatment] =
     useState<TreatmentGroup>("low_against")
 
+  const [directorModel, setDirectorModel] = useState(DIRECTOR_OPTIONS[0].model)
+  const [performerModel, setPerformerModel] = useState(PERFORMER_OPTIONS[0].model)
+  const [moderatorModel, setModeratorModel] = useState(MODERATOR_OPTIONS[0].model)
+
+  const buildLLMOverrides = (): LLMOverrides => {
+    const director = DIRECTOR_OPTIONS.find((o) => o.model === directorModel) || DIRECTOR_OPTIONS[0]
+    const performer = PERFORMER_OPTIONS.find((o) => o.model === performerModel) || PERFORMER_OPTIONS[0]
+    const moderator = MODERATOR_OPTIONS.find((o) => o.model === moderatorModel) || MODERATOR_OPTIONS[0]
+
+    return {
+      director: { provider: director.provider, model: director.model },
+      performer: { provider: performer.provider, model: performer.model },
+      moderator: { provider: moderator.provider, model: moderator.model },
+    }
+  }
+
   const handleSubmit = async () => {
     if (!devMode && !token.trim()) {
       setError("Please enter a token")
@@ -44,9 +85,14 @@ export default function LoginScreen({
     setLoading(true)
     setError("")
     try {
-      await onStart(token.trim(), username.trim(), devMode ? selectedTreatment : undefined)
+      await onStart(
+        token.trim(),
+        username.trim(),
+        devMode ? selectedTreatment : undefined,
+        devMode ? buildLLMOverrides() : undefined,
+      )
     } catch {
-      setError(devMode ? "Invalid treatment config. Please try again." : "Invalid token. Please try again.")
+      setError(devMode ? "Invalid treatment/model config. Please try again." : "Invalid token. Please try again.")
       setLoading(false)
     }
   }
@@ -86,26 +132,82 @@ export default function LoginScreen({
           </label>
 
           {devMode && (
-            <div>
-              <label
-                htmlFor="treatment"
-                className="block text-xs font-medium text-secondary mb-1"
-              >
-                Treatment (test mode)
-              </label>
-              <select
-                id="treatment"
-                value={selectedTreatment}
-                onChange={(e) => setSelectedTreatment(e.target.value as TreatmentGroup)}
-                className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm text-primary focus:outline-none focus:border-header focus:ring-1 focus:ring-header/30 transition-colors"
-              >
-                {TREATMENT_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <>
+              <div>
+                <label
+                  htmlFor="treatment"
+                  className="block text-xs font-medium text-secondary mb-1"
+                >
+                  Treatment (test mode)
+                </label>
+                <select
+                  id="treatment"
+                  value={selectedTreatment}
+                  onChange={(e) => setSelectedTreatment(e.target.value as TreatmentGroup)}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm text-primary focus:outline-none focus:border-header focus:ring-1 focus:ring-header/30 transition-colors"
+                >
+                  {TREATMENT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="directorModel" className="block text-xs font-medium text-secondary mb-1">
+                  Director model
+                </label>
+                <select
+                  id="directorModel"
+                  value={directorModel}
+                  onChange={(e) => setDirectorModel(e.target.value)}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm text-primary focus:outline-none focus:border-header focus:ring-1 focus:ring-header/30 transition-colors"
+                >
+                  {DIRECTOR_OPTIONS.map((option) => (
+                    <option key={option.model} value={option.model}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="performerModel" className="block text-xs font-medium text-secondary mb-1">
+                  Performer model
+                </label>
+                <select
+                  id="performerModel"
+                  value={performerModel}
+                  onChange={(e) => setPerformerModel(e.target.value)}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm text-primary focus:outline-none focus:border-header focus:ring-1 focus:ring-header/30 transition-colors"
+                >
+                  {PERFORMER_OPTIONS.map((option) => (
+                    <option key={option.model} value={option.model}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="moderatorModel" className="block text-xs font-medium text-secondary mb-1">
+                  Moderator model
+                </label>
+                <select
+                  id="moderatorModel"
+                  value={moderatorModel}
+                  onChange={(e) => setModeratorModel(e.target.value)}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm text-primary focus:outline-none focus:border-header focus:ring-1 focus:ring-header/30 transition-colors"
+                >
+                  {MODERATOR_OPTIONS.map((option) => (
+                    <option key={option.model} value={option.model}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
           )}
 
           <div>

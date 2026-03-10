@@ -3,12 +3,14 @@ import type {
   SessionStartResponse,
   SessionStartRequestPayload,
   TreatmentGroup,
+  LLMOverrides,
 } from "./types"
 
 export async function startSession(
   token: string,
   username?: string,
   treatmentGroup?: TreatmentGroup,
+  llmOverrides?: LLMOverrides,
 ): Promise<SessionStartResponse> {
   const payload: SessionStartRequestPayload = {
     username: username || undefined,
@@ -18,6 +20,10 @@ export async function startSession(
     payload.treatment_group = treatmentGroup
   } else {
     payload.token = token
+  }
+
+  if (llmOverrides && Object.keys(llmOverrides).length > 0) {
+    payload.llm_overrides = llmOverrides
   }
 
   const res = await fetch(`${API_BASE}/session/start`, {

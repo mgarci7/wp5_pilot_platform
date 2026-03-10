@@ -112,7 +112,8 @@ Abre la URL que muestre Next.js (normalmente `http://localhost:3000`).
 
 1. Marca **Researcher test mode (manual treatment)** en la pantalla de login.
 2. Elige el tratamiento en el desplegable (`low_*`, `medium_*`, `high_*`).
-3. Pulsa **Join Chat**.
+3. (Opcional) Elige modelos para Director/Performer/Moderator.
+4. Pulsa **Join Chat**.
 
 Si el backend no se lanzó con `ALLOW_TREATMENT_OVERRIDE=true`, el inicio de sesión manual fallará con error de configuración.
 

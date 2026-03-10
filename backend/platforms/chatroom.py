@@ -1,6 +1,6 @@
 import asyncio
 import random
-from typing import Callable, Optional
+from typing import Callable, Optional, Dict, Any
 from datetime import datetime
 
 from models import Message, Agent, SessionState
@@ -22,7 +22,7 @@ class SimulationSession:
     - wiring platform-level config, lifecycle and websocket attachment
     """
 
-    def __init__(self, session_id: str, websocket_send: Callable, treatment_group: str, user_name: str = "user"):
+    def __init__(self, session_id: str, websocket_send: Callable, treatment_group: str, user_name: str = "user", llm_overrides: Optional[Dict[str, Any]] = None):
         self.session_id = session_id
 
         # Wrap provided websocket_send so we can apply per-sender blocking rules
@@ -50,6 +50,9 @@ class SimulationSession:
 
         # Load and validate simulation config
         self.simulation_config = validate_sim_config("config/simulation_settings.toml")
+
+        # Optional per-session LLM overrides (research/dev mode)
+        self._apply_llm_overrides(llm_overrides or {})
 
         # Create LLM managers for each pipeline stage
         self.director_llm = LLMManager.from_simulation_config(self.simulation_config, role="director")
@@ -100,6 +103,32 @@ class SimulationSession:
         self.clock_task: Optional[asyncio.Task] = None
         self.running = False
         self._turn_lock = asyncio.Lock()
+
+    def _apply_llm_overrides(self, llm_overrides: Dict[str, Any]) -> None:
+        """Apply optional role-based provider/model overrides to simulation_config."""
+        if not isinstance(llm_overrides, dict):
+            return
+
+        role_map = {
+            "director": ("director_llm_provider", "director_llm_model"),
+            "performer": ("performer_llm_provider", "performer_llm_model"),
+            "moderator": ("moderator_llm_provider", "moderator_llm_model"),
+        }
+
+        for role, keys in role_map.items():
+            role_cfg = llm_overrides.get(role)
+            if not isinstance(role_cfg, dict):
+                continue
+
+            provider = role_cfg.get("provider")
+            model = role_cfg.get("model")
+            provider_key, model_key = keys
+
+            if isinstance(provider, str) and provider.strip():
+                self.simulation_config[provider_key] = provider.strip()
+            if isinstance(model, str) and model.strip():
+                self.simulation_config[model_key] = model.strip()
+
 
     async def start(self) -> None:
         """Start the session (launch the simulation loop)."""

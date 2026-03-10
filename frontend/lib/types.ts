@@ -51,7 +51,6 @@ export interface SessionStartResponse {
 
 export type BlockedSenders = Record<string, string>
 
-
 export type TreatmentGroup =
   | "low_against"
   | "low_mixed"
@@ -63,8 +62,20 @@ export type TreatmentGroup =
   | "high_mixed"
   | "high_favor"
 
+export interface LLMRoleOverride {
+  provider: string
+  model: string
+}
+
+export interface LLMOverrides {
+  director?: LLMRoleOverride
+  performer?: LLMRoleOverride
+  moderator?: LLMRoleOverride
+}
+
 export interface SessionStartRequestPayload {
   token?: string
   username?: string
   treatment_group?: TreatmentGroup
+  llm_overrides?: LLMOverrides
 }
