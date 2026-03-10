@@ -60,6 +60,15 @@ Este modo está pensado para pruebas internas (QA/research) y permite escoger ma
 
 > En producción, mantén este modo desactivado y usa tokens de participante de un solo uso.
 
+### Arranque rápido en Windows (doble clic)
+
+Si usas Anaconda Prompt con el entorno `wp5py312`, puedes evitar teclear comandos cada vez con estos launchers en la raíz del repo:
+
+- `start_wp5_researcher_mode.bat` → backend con `ALLOW_TREATMENT_OVERRIDE=true` + frontend.
+- `start_wp5_normal_mode.bat` → backend en modo token normal + frontend.
+
+Solo haz doble clic en el `.bat` que quieras usar.
+
 ### 1) Arranca backend con override habilitado
 
 Linux/macOS (bash):
