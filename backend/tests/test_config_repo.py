@@ -298,3 +298,23 @@ async def test_get_experiment_full_row(db_pool):
     assert row["description"] == "my desc"
     assert row["config"]["simulation"]["num_agents"] == 2
     assert row["created_at"] is not None
+
+
+async def test_update_experiment_config(db_pool):
+    config = copy.deepcopy(FULL_CONFIG)
+    await config_repo.save_experiment_config(db_pool, "exp_update_test", config)
+
+    config["experimental"]["chatroom_context"] = "Updated context"
+    config["experimental"]["groups"]["civil_support"]["treatment"] = "Updated treatment"
+
+    await config_repo.update_experiment_config(db_pool, "exp_update_test", config)
+
+    result = await config_repo.get_experiment_config(db_pool, "exp_update_test")
+    assert result is not None
+    assert result["experimental"]["chatroom_context"] == "Updated context"
+    assert result["experimental"]["groups"]["civil_support"]["treatment"] == "Updated treatment"
+
+
+async def test_update_missing_experiment_raises(db_pool):
+    with pytest.raises(ValueError, match="not found"):
+        await config_repo.update_experiment_config(db_pool, "does_not_exist", FULL_CONFIG)

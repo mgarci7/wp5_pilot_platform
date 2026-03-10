@@ -508,6 +508,14 @@ class TokenGenerateRequest(BaseModel):
     groups: List[str]
 
 
+class UpdateTreatmentsRequest(BaseModel):
+    chatroom_context: Optional[str] = None
+    treatments: Optional[Dict[str, str]] = None
+    features: Optional[Dict[str, List[str]]] = None
+    template: Optional[str] = None
+    groups: Optional[List[str]] = None
+
+
 @app.get("/admin/verify")
 async def admin_verify(x_admin_key: str = Header(None)):
     """Verify admin passphrase."""
@@ -716,6 +724,93 @@ async def admin_save_config(body: dict, x_admin_key: str = Header(None)):
 
     return {"status": "saved", "experiment_id": new_experiment_id}
 
+
+
+
+@app.post("/admin/experiment/{experiment_id}/treatments")
+async def admin_update_treatments(
+    experiment_id: str,
+    body: UpdateTreatmentsRequest,
+    x_admin_key: str = Header(None),
+):
+    """Patch only the experimental treatment config for an existing experiment.
+
+    This endpoint is intended for rapid prompt iteration. It updates only
+    `config.experimental` and leaves simulation settings and tokens untouched.
+    """
+    _require_admin(x_admin_key)
+    pool = _get_pool()
+
+    cfg = await config_repo.get_experiment_config(pool, experiment_id)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"Experiment '{experiment_id}' not found")
+
+    experimental = dict(cfg.get("experimental") or {})
+    groups = dict(experimental.get("groups") or {})
+    if not groups:
+        raise HTTPException(status_code=422, detail="Experiment has no treatment groups to edit")
+
+    if body.chatroom_context is not None:
+        experimental["chatroom_context"] = body.chatroom_context
+
+    target_groups = body.groups or list(groups.keys())
+    unknown_targets = sorted(set(target_groups) - set(groups.keys()))
+    if unknown_targets:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown group(s): {', '.join(unknown_targets)}",
+        )
+
+    if body.template is not None:
+        if "{group}" not in body.template:
+            raise HTTPException(
+                status_code=422,
+                detail="Template must include '{group}' placeholder",
+            )
+        for g in target_groups:
+            groups[g] = dict(groups[g])
+            groups[g]["treatment"] = body.template.replace("{group}", g)
+
+    if body.treatments:
+        unknown = sorted(set(body.treatments.keys()) - set(groups.keys()))
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Treatments include unknown group(s): {', '.join(unknown)}",
+            )
+        for g, treatment in body.treatments.items():
+            groups[g] = dict(groups[g])
+            groups[g]["treatment"] = (treatment or "").strip()
+
+    if body.features:
+        unknown = sorted(set(body.features.keys()) - set(groups.keys()))
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Features include unknown group(s): {', '.join(unknown)}",
+            )
+        for g, feats in body.features.items():
+            groups[g] = dict(groups[g])
+            groups[g]["features"] = feats or []
+
+    experimental["groups"] = groups
+
+    try:
+        validated = config_repo.validate_experimental_config(experimental, AVAILABLE_FEATURES)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Experimental config error: {e}")
+
+    cfg["experimental"] = validated
+    try:
+        await config_repo.update_experiment_config(pool, experiment_id, cfg)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    return {
+        "status": "updated",
+        "experiment_id": experiment_id,
+        "groups": list(groups.keys()),
+    }
 
 @app.post("/admin/experiment/{experiment_id}/activate")
 async def admin_activate_experiment(experiment_id: str, x_admin_key: str = Header(None)):

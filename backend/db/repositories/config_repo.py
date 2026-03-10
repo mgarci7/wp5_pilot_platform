@@ -1,8 +1,9 @@
-"""Experiment configuration repository — DB-backed immutable config storage.
+"""Experiment configuration repository — DB-backed experiment config storage.
 
 Each experiment's full configuration (simulation settings + experimental
 settings) is stored as a single JSONB blob on the ``experiments`` table.
-Once saved, the config is immutable.
+Configurations are created via immutable snapshots, but specific admin flows
+can patch parts of the JSONB document (e.g., treatment text iteration).
 """
 from __future__ import annotations
 
@@ -180,6 +181,25 @@ async def save_experiment_config(
             starts_at,
             ends_at,
         )
+
+
+async def update_experiment_config(
+    pool: asyncpg.Pool,
+    experiment_id: str,
+    config: Dict[str, Any],
+) -> None:
+    """Replace an existing experiment config JSON document.
+
+    Raises ValueError if the experiment does not exist.
+    """
+    async with pool.acquire() as conn:
+        updated = await conn.execute(
+            "UPDATE experiments SET config = $1::jsonb WHERE experiment_id = $2",
+            json.dumps(config),
+            experiment_id,
+        )
+        if updated == "UPDATE 0":
+            raise ValueError(f"Experiment '{experiment_id}' not found")
 
 
 async def get_experiment_config(
