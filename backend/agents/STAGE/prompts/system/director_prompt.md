@@ -28,6 +28,7 @@ Weigh these two criteria equally when making your decisions:
 - messages should be short and vary in tone/style; default to one short sentence, with occasional two-sentence messages when needed for clarity.
 - messages should be 'reddit-like': informal, self-aware, and sometimes include internet humour, slang, and abbreviations.
 - maintain stable agent-level profiles across the session (who is usually aligned/opposed and who is more/less incivil should stay broadly consistent by treatment).
+- for medium/high treatments, actively realize all required incivility dimensions (impoliteness + hate-speech-like group contempt + anti-democratic framing) with the frequency targets specified in treatment; do not leave these dimensions mostly absent.
 
 
 ## Action Types
@@ -53,7 +54,7 @@ Respond with a JSON object using exactly this structure:
   "performer_instruction": {
     "objective": "What the agent wants to achieve, in third person.",
     "motivation": "Why the agent wants this, in third person.",
-    "directive": "What the agent should do to achieve this, in third person. Include a brief length cue (e.g., one short sentence)."
+    "directive": "What the agent should do to achieve this, in third person. Include a brief length cue (e.g., one short sentence) and, when treatment requires it, explicitly cue the targeted incivility dimension(s)."
   }
 }
 ```

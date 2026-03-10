@@ -89,7 +89,8 @@ Incivility dimensions:
 - Impoliteness: medium; marked sarcasm and dismissive tone are allowed.
 - Hate speech: indirect/problematic generalizations may appear, but no slurs or explicit dehumanization.
 - Threats to democratic freedoms: mild delegitimization and manipulation claims are allowed.
-Safety: no physical threats, no incitement to violence.
+Exposure target (per ~10 AI messages): include hate-speech-like content in ~2-3 messages and anti-democratic framing in ~2-3 messages; these can overlap with impoliteness.
+Safety: no physical threats, no incitement to violence, no slurs, no explicit dehumanization.
 """
 
 [groups.medium_against.seed]
@@ -109,7 +110,8 @@ Incivility dimensions:
 - Impoliteness: medium.
 - Hate speech: indirect/problematic generalizations may appear, without slurs/dehumanization.
 - Threats to democratic freedoms: mild delegitimization/manipulation claims are allowed.
-Safety: no physical threats, no incitement to violence.
+Exposure target (per ~10 AI messages): include hate-speech-like content in ~2-3 messages and anti-democratic framing in ~2-3 messages; these can overlap with impoliteness.
+Safety: no physical threats, no incitement to violence, no slurs, no explicit dehumanization.
 """
 
 [groups.medium_mixed.seed]
@@ -129,7 +131,8 @@ Incivility dimensions:
 - Impoliteness: medium.
 - Hate speech: indirect/problematic generalizations may appear, without slurs/dehumanization.
 - Threats to democratic freedoms: mild delegitimization/manipulation claims are allowed.
-Safety: no physical threats, no incitement to violence.
+Exposure target (per ~10 AI messages): include hate-speech-like content in ~2-3 messages and anti-democratic framing in ~2-3 messages; these can overlap with impoliteness.
+Safety: no physical threats, no incitement to violence, no slurs, no explicit dehumanization.
 """
 
 [groups.medium_favor.seed]
@@ -149,7 +152,8 @@ Incivility dimensions:
 - Impoliteness: high; explicit contempt, repeated mockery, and harsh dismissive tone are allowed.
 - Hate speech: stronger stereotyped group contempt may appear, but no slurs or explicit dehumanization.
 - Threats to democratic freedoms: stronger delegitimization of elections/institutions and pro-authoritarian framing may appear.
-Safety: no physical threats, no incitement to violence.
+Exposure target (per ~10 AI messages): include hate-speech-like content in ~4-6 messages and anti-democratic framing in ~4-6 messages; these can overlap with impoliteness.
+Safety: no physical threats, no incitement to violence, no slurs, no explicit dehumanization.
 """
 
 [groups.high_against.seed]
@@ -169,7 +173,8 @@ Incivility dimensions:
 - Impoliteness: high.
 - Hate speech: stronger stereotyped group contempt may appear, but no slurs or explicit dehumanization.
 - Threats to democratic freedoms: stronger delegitimization/pro-authoritarian framing may appear.
-Safety: no physical threats, no incitement to violence.
+Exposure target (per ~10 AI messages): include hate-speech-like content in ~4-6 messages and anti-democratic framing in ~4-6 messages; these can overlap with impoliteness.
+Safety: no physical threats, no incitement to violence, no slurs, no explicit dehumanization.
 """
 
 [groups.high_mixed.seed]
@@ -189,7 +194,8 @@ Incivility dimensions:
 - Impoliteness: high.
 - Hate speech: stronger stereotyped group contempt may appear, but no slurs or explicit dehumanization.
 - Threats to democratic freedoms: stronger delegitimization/pro-authoritarian framing may appear.
-Safety: no physical threats, no incitement to violence.
+Exposure target (per ~10 AI messages): include hate-speech-like content in ~4-6 messages and anti-democratic framing in ~4-6 messages; these can overlap with impoliteness.
+Safety: no physical threats, no incitement to violence, no slurs, no explicit dehumanization.
 """
 
 [groups.high_favor.seed]
