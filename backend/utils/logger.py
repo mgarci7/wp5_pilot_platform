@@ -1,4 +1,5 @@
 import json
+import csv
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,7 @@ class Logger:
             "reason": reason
         })
         self._generate_html_report()
+        self._generate_annotation_csv()
 
     def _generate_html_report(self) -> None:
         """Generate an HTML report alongside the JSON log."""
@@ -58,6 +60,60 @@ class Logger:
             print(f"HTML report written to {html_path}")
         except Exception as e:
             print(f"Warning: failed to generate HTML report: {e}")
+
+    def _generate_annotation_csv(self) -> None:
+        """Generate per-session CSV template for manual coding.
+
+        One row per chat message, with empty coding columns for:
+        - incivil: yes/no
+        - stance: like-minded/not like-minded
+        - human_like: yes/no
+        """
+        try:
+            rows = []
+            with open(self.log_file, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except Exception:
+                        continue
+                    if event.get("event_type") != "message":
+                        continue
+                    data = event.get("data") or {}
+                    rows.append({
+                        "session_id": self.session_id,
+                        "timestamp": data.get("timestamp", ""),
+                        "message_id": data.get("message_id", ""),
+                        "sender": data.get("sender", ""),
+                        "content": data.get("content", ""),
+                        "incivil": "",
+                        "stance": "",
+                        "human_like": "",
+                    })
+
+            csv_path = self.log_file.with_name(f"{self.session_id}_coding.csv")
+            fieldnames = [
+                "session_id",
+                "timestamp",
+                "message_id",
+                "sender",
+                "content",
+                "incivil",
+                "stance",
+                "human_like",
+            ]
+
+            with open(csv_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            print(f"Coding CSV written to {csv_path}")
+        except Exception as e:
+            print(f"Warning: failed to generate coding CSV: {e}")
     
     def log_message(self, message: dict) -> None:
         """Log a message (user or agent)."""
