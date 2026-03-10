@@ -82,7 +82,8 @@ If no experiment is currently active, the admin panel will direct you to a setup
 5. **Participant Tokens** — auto-generate random single-use tokens with CSV download
 6. **Review & Save** — review all settings and save experiment to the database (as read-only)
 
-Once an experiment is saved, its configuration is locked in and cannot be changed.
+Once an experiment is saved, its base configuration is locked in and cannot be changed.
+For rapid prompt iteration, you can still patch the **experimental treatment block** via `POST /admin/experiment/{id}/treatments` (chatroom context, treatment text, and features).
 
 You can pause and resume experiments, as well as reset or delete them, from the dashboard (see below).
 
@@ -125,6 +126,7 @@ Protected by `X-Admin-Key` header (must match `ADMIN_PASSPHRASE`). Returns 503 i
 | `POST` | `/admin/test-llm` | Test an LLM provider with a sample prompt |
 | `GET` | `/admin/config/{experiment_id}` | Return saved config for an experiment |
 | `POST` | `/admin/config` | Validate and save experiment config to the database |
+| `POST` | `/admin/experiment/{id}/treatments` | Patch treatment text/features/chatroom context for rapid prompt iteration |
 | `GET` | `/admin/experiments` | List all experiments with summary counts |
 | `POST` | `/admin/experiment/{id}/activate` | Set the active experiment |
 | `POST` | `/admin/experiment/{id}/pause` | Pause enrollment for an experiment |

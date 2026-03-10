@@ -133,6 +133,30 @@ export async function resumeExperiment(
   return res.json()
 }
 
+
+
+export async function updateTreatments(
+  key: string,
+  experimentId: string,
+  patch: {
+    chatroom_context?: string
+    treatments?: Record<string, string>
+    features?: Record<string, string[]>
+    template?: string
+    groups?: string[]
+  },
+): Promise<{ status: string; experiment_id: string; groups: string[] }> {
+  const res = await adminFetch(`/admin/experiment/${encodeURIComponent(experimentId)}/treatments`, key, {
+    method: "POST",
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Treatment update failed" }))
+    throw new Error(err.detail || "Treatment update failed")
+  }
+  return res.json()
+}
+
 export async function generateTokens(
   key: string,
   participantsPerGroup: number,

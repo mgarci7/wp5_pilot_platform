@@ -12,6 +12,7 @@ import {
   getEvents,
   pauseExperiment,
   resumeExperiment,
+  updateTreatments,
 } from "../../lib/admin-api"
 import type { SessionSummary, TokenGroupStats, SimulationConfig, ExperimentalConfig } from "../../lib/admin-types"
 import type { ExperimentSummary, AdminEvent } from "../../lib/admin-api"
@@ -241,6 +242,12 @@ function OverviewTab({
   const [description, setDescription] = useState("")
   const [createdAt, setCreatedAt] = useState("")
   const [configLoading, setConfigLoading] = useState(true)
+  const [editOpen, setEditOpen] = useState(false)
+  const [chatroomContextDraft, setChatroomContextDraft] = useState("")
+  const [treatmentDrafts, setTreatmentDrafts] = useState<Record<string, string>>({})
+  const [templateDraft, setTemplateDraft] = useState("")
+  const [editSaving, setEditSaving] = useState(false)
+  const [editMsg, setEditMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -251,6 +258,14 @@ function OverviewTab({
         setConfig(res.config)
         setDescription(res.description)
         setCreatedAt(res.created_at)
+        setChatroomContextDraft(res.config.experimental.chatroom_context || "")
+        setTreatmentDrafts(
+          Object.fromEntries(
+            Object.entries(res.config.experimental.groups).map(([name, group]) => [name, group.treatment || ""]),
+          ),
+        )
+        setTemplateDraft("")
+        setEditMsg(null)
         setConfigLoading(false)
       })
       .catch(() => {
@@ -258,6 +273,42 @@ function OverviewTab({
       })
     return () => { cancelled = true }
   }, [adminKey, experimentId])
+
+  const applyTemplatePreview = () => {
+    if (!templateDraft.includes("{group}")) {
+      setEditMsg({ ok: false, text: "La plantilla debe incluir {group}." })
+      return
+    }
+    setTreatmentDrafts((prev) => {
+      const out: Record<string, string> = { ...prev }
+      for (const group of Object.keys(prev)) {
+        out[group] = templateDraft.replaceAll("{group}", group)
+      }
+      return out
+    })
+    setEditMsg({ ok: true, text: "Plantilla aplicada en el formulario (previsualización)." })
+  }
+
+  const saveTreatmentPatch = async () => {
+    if (!config) return
+    setEditSaving(true)
+    setEditMsg(null)
+    try {
+      await updateTreatments(adminKey, experimentId, {
+        chatroom_context: chatroomContextDraft,
+        treatments: treatmentDrafts,
+      })
+      const refreshed = await getExperimentConfig(adminKey, experimentId)
+      setConfig(refreshed.config)
+      setDescription(refreshed.description)
+      setCreatedAt(refreshed.created_at)
+      setEditMsg({ ok: true, text: "Treatments actualizados correctamente." })
+    } catch (e) {
+      setEditMsg({ ok: false, text: e instanceof Error ? e.message : "No se pudo guardar." })
+    } finally {
+      setEditSaving(false)
+    }
+  }
 
   const activeSessions = sessions.filter((s) => s.status === "active")
   const completedSessions = sessions.filter((s) => s.status === "ended" || s.status === "crashed")
@@ -381,6 +432,82 @@ function OverviewTab({
                       )}
                     </div>
                   ))}
+                </div>
+
+                <div className="mt-3 border border-admin-border rounded-lg bg-admin-raised/40">
+                  <button
+                    onClick={() => setEditOpen((v) => !v)}
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-admin-accent hover:text-admin-accent-hover transition-colors"
+                  >
+                    {editOpen ? "Hide quick treatment editor" : "Quick edit treatments"}
+                  </button>
+
+                  {editOpen && (
+                    <div className="px-3 pb-3 space-y-3 border-t border-admin-border">
+                      <p className="text-xs text-admin-faint mt-2">
+                        Edita treatments sin recrear experimento. Cambios se guardan con el endpoint rápido.
+                      </p>
+
+                      <div>
+                        <label className="block text-xs font-medium text-admin-muted mb-1">Chatroom context</label>
+                        <textarea
+                          value={chatroomContextDraft}
+                          onChange={(e) => setChatroomContextDraft(e.target.value)}
+                          rows={2}
+                          className="w-full px-2.5 py-2 border border-admin-border rounded-lg text-xs bg-admin-surface text-admin-text focus:outline-none focus:ring-1 focus:ring-admin-accent/30"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 items-end">
+                        <div>
+                          <label className="block text-xs font-medium text-admin-muted mb-1">Template ({"{group}"} required)</label>
+                          <input
+                            type="text"
+                            value={templateDraft}
+                            onChange={(e) => setTemplateDraft(e.target.value)}
+                            placeholder="e.g. Keep tone civil in {group}"
+                            className="w-full px-2.5 py-2 border border-admin-border rounded-lg text-xs bg-admin-surface text-admin-text focus:outline-none focus:ring-1 focus:ring-admin-accent/30"
+                          />
+                        </div>
+                        <button
+                          onClick={applyTemplatePreview}
+                          className="px-3 py-2 text-xs font-medium rounded-lg border border-admin-border text-admin-text hover:bg-admin-surface"
+                        >
+                          Apply template
+                        </button>
+                      </div>
+
+                      <div className="space-y-2">
+                        {Object.keys(treatmentDrafts).map((group) => (
+                          <div key={group}>
+                            <label className="block text-xs font-mono text-admin-text mb-1">{group}</label>
+                            <textarea
+                              rows={2}
+                              value={treatmentDrafts[group] ?? ""}
+                              onChange={(e) => setTreatmentDrafts((prev) => ({ ...prev, [group]: e.target.value }))}
+                              className="w-full px-2.5 py-2 border border-admin-border rounded-lg text-xs bg-admin-surface text-admin-text focus:outline-none focus:ring-1 focus:ring-admin-accent/30"
+                            />
+                          </div>
+                        ))}
+                      </div>
+
+                      {editMsg && (
+                        <p className={`text-xs ${editMsg.ok ? "text-admin-pastel-green-text" : "text-red-500"}`}>
+                          {editMsg.text}
+                        </p>
+                      )}
+
+                      <div className="flex justify-end">
+                        <button
+                          onClick={saveTreatmentPatch}
+                          disabled={editSaving}
+                          className="px-3 py-1.5 text-xs font-medium bg-admin-accent text-white rounded-lg hover:bg-admin-accent-hover disabled:opacity-50"
+                        >
+                          {editSaving ? "Saving..." : "Save treatment changes"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </>
