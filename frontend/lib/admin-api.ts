@@ -1,7 +1,7 @@
 /* Admin API client — all requests include X-Admin-Key header. */
 
 import { API_BASE } from "./constants"
-import type { AdminMeta, SessionSummary, SimulationConfig, ExperimentalConfig, TokenConfig, TokenGroupStats, TestLLMResult } from "./admin-types"
+import type { AdminMeta, SessionSummary, SimulationConfig, ExperimentalConfig, TokenConfig, TokenGroupStats, TestLLMResult, ComplianceStats, ProviderKeyStatus } from "./admin-types"
 
 async function adminFetch(
   path: string,
@@ -33,6 +33,28 @@ export async function getMeta(key: string): Promise<AdminMeta> {
   return res.json()
 }
 
+export async function getProviderKeys(key: string): Promise<Record<string, ProviderKeyStatus>> {
+  const res = await adminFetch("/admin/provider-keys", key)
+  if (!res.ok) throw new Error("Failed to load provider key status")
+  return res.json()
+}
+
+export async function setProviderKey(
+  key: string,
+  provider: string,
+  keyValue: string,
+  extraValues?: Record<string, string>,
+): Promise<void> {
+  const res = await adminFetch("/admin/provider-keys", key, {
+    method: "POST",
+    body: JSON.stringify({ provider, key_value: keyValue, extra_values: extraValues ?? null }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Failed to save key" }))
+    throw new Error(err.detail || "Failed to save key")
+  }
+}
+
 export async function testLlm(
   key: string,
   params: {
@@ -41,6 +63,7 @@ export async function testLlm(
     temperature?: number | null
     top_p?: number | null
     max_tokens?: number
+    bsc_model_version?: string
   },
 ): Promise<TestLLMResult> {
   const res = await adminFetch("/admin/test-llm", key, {
@@ -62,6 +85,8 @@ export async function getExperimentConfig(
   description: string
   config: { simulation: SimulationConfig; experimental: ExperimentalConfig }
   created_at: string
+  starts_at: string | null
+  ends_at: string | null
 }> {
   const res = await adminFetch(`/admin/config/${encodeURIComponent(experimentId)}`, key)
   if (!res.ok) throw new Error("Failed to load experiment config")
@@ -87,6 +112,28 @@ export async function saveConfig(
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: "Save failed" }))
     throw new Error(err.detail || "Save failed")
+  }
+  return res.json()
+}
+
+export async function updateConfig(
+  key: string,
+  experimentId: string,
+  config: {
+    description?: string
+    simulation: SimulationConfig
+    experimental: ExperimentalConfig
+    starts_at?: string | null
+    ends_at?: string | null
+  },
+): Promise<{ status: string; experiment_id: string }> {
+  const res = await adminFetch(`/admin/config/${encodeURIComponent(experimentId)}`, key, {
+    method: "PUT",
+    body: JSON.stringify(config),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Update failed" }))
+    throw new Error(err.detail || "Update failed")
   }
   return res.json()
 }
@@ -201,6 +248,24 @@ export interface AdminEvent {
   data: Record<string, unknown>
 }
 
+export interface SessionMessageForEvaluation {
+  message_id: string
+  sender: string
+  is_participant_message?: boolean
+  content: string
+  timestamp: string
+  manual_evaluation?: {
+    incivility: boolean
+    hate_speech: boolean
+    threats_to_dem_freedom: boolean
+    impoliteness: boolean
+    alignment: string
+    human_like: string
+    other: string
+    updated_at?: string | null
+  } | null
+}
+
 export async function getEvents(
   key: string,
   experimentId: string,
@@ -215,6 +280,84 @@ export async function getEvents(
   const res = await adminFetch(`/admin/events?${params}`, key)
   if (!res.ok) throw new Error("Failed to load events")
   return res.json()
+}
+
+export async function getSessionMessagesForEvaluation(
+  key: string,
+  sessionId: string,
+  experimentId: string,
+): Promise<{ messages: SessionMessageForEvaluation[] }> {
+  const params = new URLSearchParams({ experiment_id: experimentId })
+  const res = await adminFetch(`/admin/session/${encodeURIComponent(sessionId)}/messages?${params}`, key)
+  if (!res.ok) throw new Error("Failed to load session messages")
+  return res.json()
+}
+
+export async function downloadSessionBundle(
+  key: string,
+  sessionId: string,
+  experimentId: string,
+): Promise<void> {
+  const params = new URLSearchParams({ experiment_id: experimentId })
+  const res = await adminFetch(`/admin/session/${encodeURIComponent(sessionId)}/export?${params}`, key)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Session export failed" }))
+    throw new Error(err.detail || "Session export failed")
+  }
+
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = `${sessionId}_stage_session.json`
+  a.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+export async function saveSessionEvaluation(
+  key: string,
+  sessionId: string,
+  experimentId: string,
+  rows: Array<{
+    message_id: string
+    incivility: boolean
+    hate_speech: boolean
+    threats_to_dem_freedom: boolean
+    impoliteness: boolean
+    alignment: string
+    human_like: string
+    other: string
+  }>,
+): Promise<{ status: string; session_id: string; saved_rows: number }> {
+  const params = new URLSearchParams({ experiment_id: experimentId })
+  const res = await adminFetch(`/admin/session/${encodeURIComponent(sessionId)}/evaluation?${params}`, key, {
+    method: "PUT",
+    body: JSON.stringify({ rows }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Failed to save evaluation" }))
+    throw new Error(err.detail || "Failed to save evaluation")
+  }
+  return res.json()
+}
+
+export async function downloadEvaluationSummaryCSV(
+  key: string,
+  experimentId: string,
+): Promise<void> {
+  const res = await adminFetch(`/admin/evaluations/summary-csv/${encodeURIComponent(experimentId)}`, key)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Summary CSV export failed" }))
+    throw new Error(err.detail || "Summary CSV export failed")
+  }
+
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = `${experimentId}_evaluation_summary.csv`
+  a.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 export async function resetSessions(
@@ -232,6 +375,42 @@ export async function resetSessions(
   return res.json()
 }
 
+export async function cloneExperiment(
+  key: string,
+  sourceId: string,
+  newId: string,
+  description?: string,
+): Promise<{ status: string; source_experiment_id: string; new_experiment_id: string }> {
+  const res = await adminFetch(`/admin/experiment/${encodeURIComponent(sourceId)}/clone`, key, {
+    method: "POST",
+    body: JSON.stringify({ new_experiment_id: newId, description }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Clone failed" }))
+    throw new Error(err.detail || "Clone failed")
+  }
+  return res.json()
+}
+
+export async function downloadSessionsCSV(
+  key: string,
+  experimentId: string,
+): Promise<void> {
+  const res = await adminFetch(`/admin/sessions/csv/${encodeURIComponent(experimentId)}`, key)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "CSV export failed" }))
+    throw new Error(err.detail || "CSV export failed")
+  }
+
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = `${experimentId}_sessions.csv`
+  a.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
 export async function deleteExperiment(
   key: string,
   experimentId: string,
@@ -244,5 +423,20 @@ export async function deleteExperiment(
     const err = await res.json().catch(() => ({ detail: "Delete failed" }))
     throw new Error(err.detail || "Delete failed")
   }
+  return res.json()
+}
+
+export async function fetchPromptDefaults(key: string): Promise<Record<string, string>> {
+  const res = await adminFetch("/admin/prompt-defaults", key)
+  if (!res.ok) throw new Error("Failed to load prompt defaults")
+  return res.json()
+}
+
+export async function getComplianceStats(
+  key: string,
+  experimentId: string,
+): Promise<ComplianceStats> {
+  const res = await adminFetch(`/admin/experiment/${encodeURIComponent(experimentId)}/compliance`, key)
+  if (!res.ok) throw new Error("Failed to load compliance stats")
   return res.json()
 }

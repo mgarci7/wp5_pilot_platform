@@ -6,8 +6,11 @@ All tests use mock LLM clients to avoid external API calls.
 import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
 
 from utils.llm.llm_manager import LLMManager, _create_client
+from utils.llm.provider.llm_anthropic import AnthropicClient
+from utils.llm.provider.llm_mistral import MistralClient
 
 
 # ── Construction / validation ────────────────────────────────────────────────
@@ -106,6 +109,7 @@ class TestFromSimulationConfig:
             mock_create.assert_called_once_with(
                 "anthropic", "claude-3",
                 temperature=None, top_p=None, max_tokens=None,
+                bsc_model_version=None,
             )
 
     def test_role_fallback_to_generic(self):
@@ -142,3 +146,74 @@ class TestCreateClient:
             MockGemini.return_value = MagicMock()
             client = _create_client(None)
             MockGemini.assert_called_once()
+
+    def test_bsc_model_version_only_passed_to_bsc(self):
+        with patch("utils.llm.provider.llm_anthropic.AnthropicClient") as MockAnthropic:
+            MockAnthropic.return_value = MagicMock()
+            _create_client("anthropic", model="claude-3", bsc_model_version="v1")
+            assert "bsc_model_version" not in MockAnthropic.call_args.kwargs
+
+        with patch("utils.llm.provider.llm_bsc.BSCClient") as MockBSC:
+            MockBSC.return_value = MagicMock()
+            _create_client("bsc", model="incivility", bsc_model_version="v1")
+            assert MockBSC.call_args.kwargs["bsc_model_version"] == "v1"
+
+
+class TestProviderTruncationRetries:
+
+    def test_anthropic_retries_with_more_tokens_when_stop_reason_is_max_tokens(self):
+        client = AnthropicClient.__new__(AnthropicClient)
+        client.model_name = "claude-test"
+        client.temperature = None
+        client.top_p = None
+        client.max_tokens = 256
+        client.aclient = None
+
+        first = SimpleNamespace(
+            content=[SimpleNamespace(text="Mensaje largo cortado")],
+            stop_reason="max_tokens",
+        )
+        second = SimpleNamespace(
+            content=[SimpleNamespace(text="Mensaje largo completo.")],
+            stop_reason="end_turn",
+        )
+        create = MagicMock(side_effect=[first, second])
+        client.client = SimpleNamespace(messages=SimpleNamespace(create=create))
+
+        result = client.generate_response("prompt", max_retries=1)
+
+        assert result == "Mensaje largo completo."
+        assert create.call_args_list[0].kwargs["max_tokens"] == 256
+        assert create.call_args_list[1].kwargs["max_tokens"] > 256
+
+    def test_mistral_retries_with_more_tokens_when_finish_reason_is_length(self):
+        client = MistralClient.__new__(MistralClient)
+        client.model_name = "mistral-test"
+        client.temperature = None
+        client.top_p = None
+        client.max_tokens = 256
+
+        first = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="Mensaje largo cortado"),
+                    finish_reason="length",
+                )
+            ]
+        )
+        second = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="Mensaje largo completo."),
+                    finish_reason="stop",
+                )
+            ]
+        )
+        complete = MagicMock(side_effect=[first, second])
+        client.client = SimpleNamespace(chat=SimpleNamespace(complete=complete))
+
+        result = client.generate_response("prompt", max_retries=1)
+
+        assert result == "Mensaje largo completo."
+        assert complete.call_args_list[0].kwargs["max_tokens"] == 256
+        assert complete.call_args_list[1].kwargs["max_tokens"] > 256

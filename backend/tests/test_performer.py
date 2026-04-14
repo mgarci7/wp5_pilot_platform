@@ -64,6 +64,11 @@ class TestBuildPerformerSystemPrompt:
         # Chatroom context is in the {#USER} block, not the system prompt
         assert "Climate debate" not in result
 
+    def test_system_prompt_limits_message_length(self):
+        result = build_performer_system_prompt()
+        assert "default to 2-3 short sentences" in result
+        assert "do not go beyond 3 sentences" in result
+
 
 # ── build_performer_user_prompt ────────────────────────────────────────────
 

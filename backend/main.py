@@ -1,4 +1,5 @@
 import asyncio
+import csv
 import io
 import json
 import os
@@ -6,7 +7,7 @@ import secrets
 import string
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 import uuid
 
 from fastapi import FastAPI, Header, WebSocket, WebSocketDisconnect, HTTPException
@@ -18,13 +19,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from platforms import SimulationSession
+from models import Message
 from utils.session_manager import session_manager
 from utils import token_manager
-from utils.logger import Logger
 from utils.log_viewer import generate_html_from_lines
+from utils.session_csv_exporter import export_session_messages_csv
 from db import connection as db_conn
 from cache import redis_client
-from db.repositories import message_repo, session_repo, event_repo, config_repo
+from db.repositories import message_repo, session_repo, event_repo, config_repo, token_repo
 from features import AVAILABLE_FEATURES, FEATURES_META
 
 
@@ -133,7 +135,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Admin-Key"],
 )
 
@@ -142,11 +144,17 @@ app.add_middleware(
 
 class SessionStartRequest(BaseModel):
     token: str
+    participant_name: Optional[str] = None
+    participant_stance: Optional[Literal["favor", "against", "skeptical"]] = None
 
 
 class SessionStartResponse(BaseModel):
     session_id: str
     message: str
+
+
+class ParticipantStanceUpdateRequest(BaseModel):
+    participant_stance: Literal["favor", "against", "skeptical"]
 
 
 class LikeRequest(BaseModel):
@@ -157,6 +165,21 @@ class ReportRequest(BaseModel):
     user: str
     block: Optional[bool] = False
     reason: Optional[str] = None
+
+
+class ManualEvaluationRowRequest(BaseModel):
+    message_id: str
+    incivility: bool = False
+    hate_speech: bool = False
+    threats_to_dem_freedom: bool = False
+    impoliteness: bool = False
+    alignment: Literal["", "like_minded", "not_like_minded"] = ""
+    human_like: Literal["", "yes", "no"] = ""
+    other: str = ""
+
+
+class SessionEvaluationSaveRequest(BaseModel):
+    rows: List[ManualEvaluationRowRequest]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -188,12 +211,6 @@ async def start_session(request: SessionStartRequest):
 
     group, experiment_id = result
 
-    Logger.log_admin_event("token_consumed", {
-        "token": request.token,
-        "treatment_group": group,
-        "session_id": session_id,
-    }, experiment_id=experiment_id)
-
     # Check experiment availability (date window + paused status).
     unavailable = await config_repo.check_experiment_availability(pool, experiment_id)
     if unavailable:
@@ -203,16 +220,16 @@ async def start_session(request: SessionStartRequest):
                 "UPDATE tokens SET used = FALSE, used_at = NULL, session_id = NULL WHERE token = $1",
                 request.token,
             )
-        Logger.log_admin_event("token_rollback", {
-            "token": request.token,
-            "reason": unavailable,
-            "experiment_id": experiment_id,
-        }, experiment_id=experiment_id)
         raise HTTPException(status_code=403, detail=unavailable)
 
     await session_manager.reserve_pending(
         session_id,
-        {"treatment_group": group, "user_name": "participant", "token": request.token},
+        {
+            "treatment_group": group,
+            "user_name": request.participant_name or "participant",
+            "token": request.token,
+            "participant_stance": request.participant_stance,
+        },
         experiment_id=experiment_id,
     )
 
@@ -220,6 +237,18 @@ async def start_session(request: SessionStartRequest):
         session_id=session_id,
         message=f"Session created (group: {group}). Connect via WebSocket to start.",
     )
+
+
+@app.post("/session/{session_id}/participant-stance")
+async def update_participant_stance(session_id: str, request: ParticipantStanceUpdateRequest):
+    """Update the participant self-report after they read the seed article."""
+    updated = await session_manager.update_participant_stance(session_id, request.participant_stance)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {
+        "session_id": session_id,
+        "participant_stance": request.participant_stance,
+    }
 
 
 @app.get("/health")
@@ -273,6 +302,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             return
 
         user_name = pending.get("user_name", "participant")
+        participant_stance = pending.get("participant_stance")
         experiment_id = pending.get("experiment_id")
         if not experiment_id:
             await websocket.close(code=1008)
@@ -286,6 +316,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 treatment_group=treatment_group,
                 user_name=user_name,
                 experiment_id=experiment_id,
+                participant_stance=participant_stance,
             )
         except RuntimeError as e:
             print(f"WebSocket session creation failed for {session_id}: {e}")
@@ -491,11 +522,15 @@ async def session_report(session_id: str):
         # Skip "message" events — messages are loaded separately from the messages table
         if evt["event_type"] == "message":
             continue
+        data = evt["data"]
+        if evt["event_type"] == "session_start" and isinstance(data, dict):
+            if not data.get("participant_stance_hint") and row.get("participant_stance"):
+                data = {**data, "participant_stance_hint": row.get("participant_stance")}
         lines.append({
             "timestamp": evt["occurred_at"],
             "event_type": evt["event_type"],
             "session_id": session_id,
-            "data": evt["data"],
+            "data": data,
         })
 
     for msg in messages:
@@ -515,6 +550,59 @@ async def session_report(session_id: str):
 
     html = generate_html_from_lines(buf, session_id)
     return HTMLResponse(content=html)
+
+
+@app.get("/session/{session_id}/messages-csv")
+async def session_messages_csv(session_id: str):
+    """Download a single-session annotation template CSV."""
+    pool = _get_pool()
+
+    row = await session_repo.get_session(pool, session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    raw_messages = await message_repo.get_session_messages(pool, session_id)
+    messages = [
+        Message(
+            sender=msg["sender"],
+            content=msg["content"],
+            timestamp=datetime.fromisoformat(msg["timestamp"].replace("Z", "+00:00")),
+            message_id=msg["message_id"],
+            reply_to=msg.get("reply_to"),
+            quoted_text=msg.get("quoted_text"),
+            mentions=msg.get("mentions"),
+            liked_by=set(msg.get("liked_by") or []),
+            reported=bool(msg.get("reported")),
+            metadata={
+                k: v
+                for k, v in msg.items()
+                if k
+                not in {
+                    "sender",
+                    "content",
+                    "timestamp",
+                    "message_id",
+                    "reply_to",
+                    "quoted_text",
+                    "mentions",
+                    "likes_count",
+                    "liked_by",
+                    "reported",
+                }
+            },
+        )
+        for msg in raw_messages
+    ]
+
+    csv_path = export_session_messages_csv(session_id, messages)
+    with open(csv_path, "rb") as handle:
+        csv_bytes = handle.read()
+
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{session_id}.csv"'},
+    )
 
 
 # ── Admin endpoints (guarded by ADMIN_PASSPHRASE env var) ────────────────────
@@ -545,6 +633,147 @@ async def admin_verify(x_admin_key: str = Header(None)):
     return {"status": "ok"}
 
 
+# ── Provider key management ───────────────────────────────────────────────────
+# Keys are stored only in the .env file on disk and in os.environ in-process.
+# The API NEVER returns key values — only present/absent status.
+
+# Map provider name → (env var name, optional extra env vars)
+_PROVIDER_KEY_MAP: dict[str, dict] = {
+    "anthropic":   {"key_var": "ANTHROPIC_API_KEY"},
+    "gemini":      {"key_var": "GEMINI_API_KEY"},
+    "huggingface": {"key_var": "HF_API_KEY"},
+    "mistral":     {"key_var": "MISTRAL_API_KEY"},
+    "konstanz":    {"key_var": "KONSTANZ_API_KEY"},
+    "bsc":         {"key_var": "BSC_API_KEY", "extra": {"BSC_API_BASE_URL": "Endpoint URL"}},
+}
+
+_PLACEHOLDER = "your_api_key_here"
+
+
+def _find_dotenv_path() -> Optional[str]:
+    """Find the .env file — check repo root and backend dir."""
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "..", ".env"),
+        os.path.join(os.path.dirname(__file__), ".env"),
+        ".env",
+    ]
+    for c in candidates:
+        p = os.path.abspath(c)
+        if os.path.isfile(p):
+            return p
+    # If none exists yet, return the repo-root path so we can create it.
+    return os.path.abspath(candidates[0])
+
+
+def _read_dotenv_lines(path: str) -> list[str]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.readlines()
+    except FileNotFoundError:
+        return []
+
+
+def _write_env_var(var: str, value: str) -> None:
+    """Write or update a single env var in the .env file and os.environ.
+
+    Security: value is written directly to disk — never logged or returned.
+    """
+    path = _find_dotenv_path()
+    lines = _read_dotenv_lines(path)
+
+    # Replace existing line if present, otherwise append.
+    found = False
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(f"{var}=") or stripped.startswith(f"{var} ="):
+            new_lines.append(f"{var}={value}\n")
+            found = True
+        else:
+            new_lines.append(line)
+
+    if not found:
+        # Add a blank line before if file doesn't end with one.
+        if new_lines and not new_lines[-1].endswith("\n\n"):
+            if new_lines[-1].strip():
+                new_lines.append("\n")
+        new_lines.append(f"{var}={value}\n")
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
+    # Also update the live process environment so the change takes effect
+    # immediately without requiring a container restart.
+    os.environ[var] = value
+
+
+def _is_key_configured(var: str) -> bool:
+    """Return True if the env var is set to a non-placeholder, non-empty value."""
+    val = (os.environ.get(var) or "").strip()
+    return bool(val) and val != _PLACEHOLDER
+
+
+@app.get("/admin/provider-keys")
+async def admin_get_provider_keys(x_admin_key: str = Header(None)):
+    """Return configured status for each provider key.
+
+    NEVER returns key values — only True/False per variable.
+    """
+    _require_admin(x_admin_key)
+    result: dict[str, dict] = {}
+    for provider, cfg in _PROVIDER_KEY_MAP.items():
+        key_var = cfg["key_var"]
+        entry: dict = {"key_var": key_var, "configured": _is_key_configured(key_var)}
+        extra = cfg.get("extra", {})
+        if extra:
+            entry["extra"] = {
+                var: {"label": label, "configured": _is_key_configured(var)}
+                for var, label in extra.items()
+            }
+        result[provider] = entry
+    return result
+
+
+class ProviderKeyUpdate(BaseModel):
+    provider: str
+    key_value: str                    # the new API key — never stored in DB
+    extra_values: Optional[Dict[str, str]] = None  # e.g. {"BSC_API_BASE_URL": "..."}
+
+
+@app.post("/admin/provider-keys")
+async def admin_set_provider_key(
+    body: ProviderKeyUpdate,
+    x_admin_key: str = Header(None),
+):
+    """Write a provider API key to the .env file and reload into os.environ.
+
+    The key value is written to disk only. It is never stored in the DB,
+    never logged, and never returned in any response.
+    """
+    _require_admin(x_admin_key)
+
+    if body.provider not in _PROVIDER_KEY_MAP:
+        raise HTTPException(status_code=422, detail=f"Unknown provider: {body.provider}")
+
+    cfg = _PROVIDER_KEY_MAP[body.provider]
+    key_var = cfg["key_var"]
+
+    if not body.key_value.strip():
+        raise HTTPException(status_code=422, detail="key_value must not be empty")
+
+    _write_env_var(key_var, body.key_value.strip())
+
+    # Handle optional extra vars (e.g. BSC endpoint URL)
+    if body.extra_values:
+        allowed_extra = cfg.get("extra", {})
+        for var, val in body.extra_values.items():
+            if var not in allowed_extra:
+                raise HTTPException(status_code=422, detail=f"Unknown extra var: {var}")
+            _write_env_var(var, val.strip())
+
+    return {"status": "ok", "provider": body.provider}
+
+
 @app.get("/admin/meta")
 async def admin_get_meta(x_admin_key: str = Header(None)):
     """Return platform metadata for the admin wizard (available features, LLM providers)."""
@@ -562,12 +791,33 @@ async def admin_get_meta(x_admin_key: str = Header(None)):
     }
 
 
+@app.get("/admin/prompt-defaults")
+async def admin_prompt_defaults(x_admin_key: str = Header(None)):
+    """Return the default prompt template file contents for all roles."""
+    _require_admin(x_admin_key)
+    from pathlib import Path
+    prompts_dir = Path(__file__).parent / "agents" / "STAGE" / "prompts"
+    def _read(filename: str) -> str:
+        try:
+            return (prompts_dir / filename).read_text(encoding="utf-8")
+        except Exception:
+            return ""
+    return {
+        "performer_prompt_template": _read("performer_prompt.md"),
+        "director_action_prompt_template": _read("director_action_prompt.md"),
+        "director_evaluate_prompt_template": _read("director_evaluate_prompt.md"),
+        "moderator_prompt_template": _read("moderator_prompt.md"),
+        "classifier_prompt_template": _read("system/classifier_prompt.md") + "\n---\n" + _read("user/classifier_prompt.md"),
+    }
+
+
 class TestLLMRequest(BaseModel):
     provider: str
     model: str
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     max_tokens: int = 64
+    bsc_model_version: Optional[str] = None
 
 
 @app.post("/admin/test-llm")
@@ -604,6 +854,13 @@ async def admin_test_llm(body: TestLLMRequest, x_admin_key: str = Header(None)):
         "top_p": effective_top_p,
         "max_tokens": body.max_tokens,
     }
+    if provider == "bsc":
+        bsc_model_version = (body.bsc_model_version or "v1").lower()
+        if bsc_model_version not in {"v1", "v2"}:
+            raise HTTPException(status_code=422, detail="bsc_model_version must be 'v1' or 'v2'")
+        call_params["bsc_model_version"] = bsc_model_version
+    else:
+        bsc_model_version = None
 
     test_prompt = "Reply with exactly one sentence: The quick brown fox"
 
@@ -614,6 +871,7 @@ async def admin_test_llm(body: TestLLMRequest, x_admin_key: str = Header(None)):
             temperature=effective_temperature,
             top_p=effective_top_p,
             max_tokens=body.max_tokens,
+            bsc_model_version=bsc_model_version,
         )
     except Exception as e:
         return {
@@ -744,12 +1002,126 @@ async def admin_save_config(body: dict, x_admin_key: str = Header(None)):
     # Activate this experiment.
     _experiment_id = new_experiment_id
 
-    Logger.log_admin_event("admin_config_save", {
-        "experiment_id": new_experiment_id,
-        "description": description,
-    }, experiment_id=new_experiment_id)
-
     return {"status": "saved", "experiment_id": new_experiment_id}
+
+
+@app.put("/admin/config/{experiment_id}")
+async def admin_update_config(experiment_id: str, body: dict, x_admin_key: str = Header(None)):
+    """Validate and update an existing experiment config."""
+    _require_admin(x_admin_key)
+
+    description = (body.get("description") or "").strip()
+
+    sim = body.get("simulation")
+    if not sim:
+        raise HTTPException(status_code=422, detail="simulation config is required")
+    try:
+        sim = config_repo.validate_simulation_config(sim)
+    except (ValueError, TypeError, KeyError) as e:
+        raise HTTPException(status_code=422, detail=f"Simulation config error: {e}")
+
+    exp = body.get("experimental")
+    if not exp:
+        raise HTTPException(status_code=422, detail="experimental config is required")
+    try:
+        exp = config_repo.validate_experimental_config(exp, AVAILABLE_FEATURES)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Experimental config error: {e}")
+
+    starts_at = None
+    ends_at = None
+    raw_starts = body.get("starts_at")
+    raw_ends = body.get("ends_at")
+    if raw_starts:
+        try:
+            starts_at = datetime.fromisoformat(raw_starts.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            raise HTTPException(status_code=422, detail="Invalid starts_at datetime")
+    if raw_ends:
+        try:
+            ends_at = datetime.fromisoformat(raw_ends.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            raise HTTPException(status_code=422, detail="Invalid ends_at datetime")
+    if starts_at and ends_at and ends_at <= starts_at:
+        raise HTTPException(status_code=422, detail="ends_at must be after starts_at")
+
+    pool = _get_pool()
+    config_blob = {"simulation": sim, "experimental": exp}
+    try:
+        await config_repo.update_experiment_config(
+            pool,
+            experiment_id,
+            config_blob,
+            description,
+            starts_at=starts_at,
+            ends_at=ends_at,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    return {"status": "updated", "experiment_id": experiment_id}
+
+
+@app.post("/admin/experiment/{experiment_id}/clone")
+async def admin_clone_experiment(experiment_id: str, body: dict, x_admin_key: str = Header(None)):
+    """Clone an experiment under a new ID and generate fresh tokens."""
+    _require_admin(x_admin_key)
+
+    new_experiment_id = (body.get("new_experiment_id") or "").strip()
+    if not new_experiment_id:
+        raise HTTPException(status_code=422, detail="new_experiment_id is required")
+
+    pool = _get_pool()
+    experiment = await config_repo.get_experiment(pool, experiment_id)
+    if not experiment:
+        raise HTTPException(status_code=404, detail=f"Experiment '{experiment_id}' not found")
+
+    existing = await config_repo.get_experiment(pool, new_experiment_id)
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Experiment '{new_experiment_id}' already exists")
+
+    description = (body.get("description") or f"Clone of {experiment_id}").strip()
+    cfg = experiment["config"]
+
+    try:
+        await config_repo.save_experiment_config(
+            pool,
+            new_experiment_id,
+            cfg,
+            description,
+            starts_at=experiment.get("starts_at"),
+            ends_at=experiment.get("ends_at"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    existing_tokens = await token_repo.list_tokens(pool, experiment_id)
+    token_counts: Dict[str, int] = {}
+    for row in existing_tokens:
+        group = row["treatment_group"]
+        token_counts[group] = token_counts.get(group, 0) + 1
+
+    new_token_groups: Dict[str, List[str]] = {}
+    seen_tokens: set[str] = set()
+    for group, count in token_counts.items():
+        generated: List[str] = []
+        for _ in range(count):
+            while True:
+                token = _generate_token()
+                if token not in seen_tokens:
+                    seen_tokens.add(token)
+                    generated.append(token)
+                    break
+        new_token_groups[group] = generated
+
+    if new_token_groups:
+        await token_manager.seed_tokens(pool, new_experiment_id, new_token_groups)
+
+    return {
+        "status": "cloned",
+        "source_experiment_id": experiment_id,
+        "new_experiment_id": new_experiment_id,
+    }
 
 
 @app.post("/admin/experiment/{experiment_id}/activate")
@@ -769,17 +1141,15 @@ async def admin_activate_experiment(experiment_id: str, x_admin_key: str = Heade
 
 @app.post("/admin/experiment/{experiment_id}/pause")
 async def admin_pause_experiment(experiment_id: str, x_admin_key: str = Header(None)):
-    """Pause an experiment so no new sessions can be started."""
+    """Pause an experiment — blocks new sessions and silences active ones."""
     _require_admin(x_admin_key)
     pool = _get_pool()
     try:
         await config_repo.set_paused(pool, experiment_id, True)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    Logger.log_admin_event("admin_pause", {
-        "experiment_id": experiment_id,
-    }, experiment_id=experiment_id)
-    return {"status": "paused", "experiment_id": experiment_id}
+    affected = session_manager.set_experiment_paused(experiment_id, True)
+    return {"status": "paused", "experiment_id": experiment_id, "sessions_paused": affected}
 
 
 @app.post("/admin/experiment/{experiment_id}/resume")
@@ -791,10 +1161,8 @@ async def admin_resume_experiment(experiment_id: str, x_admin_key: str = Header(
         await config_repo.set_paused(pool, experiment_id, False)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    Logger.log_admin_event("admin_resume", {
-        "experiment_id": experiment_id,
-    }, experiment_id=experiment_id)
-    return {"status": "resumed", "experiment_id": experiment_id}
+    affected = session_manager.set_experiment_paused(experiment_id, False)
+    return {"status": "resumed", "experiment_id": experiment_id, "sessions_resumed": affected}
 
 
 @app.post("/admin/tokens/generate")
@@ -947,11 +1315,6 @@ async def admin_reset_sessions(
     for sid in session_ids:
         await redis_client.invalidate_session(r, sid)
 
-    Logger.log_admin_event("admin_reset_sessions", {
-        "experiment_id": target_id,
-        "sessions_deleted": len(session_ids),
-    }, experiment_id=target_id)
-
     return {"status": "sessions_reset", "experiment_id": target_id, "sessions_deleted": len(session_ids)}
 
 
@@ -1031,10 +1394,6 @@ async def admin_reset_db(
     # Clear active experiment if it was the deleted one.
     if _experiment_id == target_id:
         _experiment_id = ""
-
-    Logger.log_admin_event("admin_reset_db", {
-        "experiment_id": target_id,
-    }, experiment_id=target_id)
 
     return {"status": "experiment_deleted", "experiment_id": target_id}
 
@@ -1126,6 +1485,168 @@ async def admin_list_events(
     }
 
 
+@app.get("/admin/session/{session_id}/messages")
+async def admin_session_messages(
+    session_id: str,
+    experiment_id: Optional[str] = None,
+    x_admin_key: str = Header(None),
+):
+    """Return ordered messages for a session, scoped to the selected experiment."""
+    _require_admin(x_admin_key)
+    eid = experiment_id or get_experiment_id()
+    pool = _get_pool()
+
+    session_row = await session_repo.get_session(pool, session_id)
+    if not session_row or session_row["experiment_id"] != eid:
+        raise HTTPException(status_code=404, detail="Session not found for this experiment")
+
+    messages = await message_repo.get_session_messages(pool, session_id)
+    saved_evaluations = await message_repo.get_manual_evaluations(pool, session_id)
+    return {
+        "messages": [
+            {
+                "message_id": msg["message_id"],
+                "sender": msg["sender"],
+                "is_participant_message": msg["sender"] == session_row["user_name"],
+                "content": msg["content"],
+                "timestamp": msg["timestamp"],
+                "is_incivil": msg.get("is_incivil"),
+                "is_like_minded": msg.get("is_like_minded"),
+                "inferred_participant_stance": msg.get("inferred_participant_stance"),
+                "classification_rationale": msg.get("classification_rationale"),
+                "manual_evaluation": saved_evaluations.get(msg["message_id"]),
+            }
+            for msg in messages
+        ]
+    }
+
+
+@app.get("/admin/session/{session_id}/export")
+async def admin_export_session_bundle(
+    session_id: str,
+    experiment_id: Optional[str] = None,
+    x_admin_key: str = Header(None),
+):
+    """Download a single session bundle with session row, messages, and events."""
+    _require_admin(x_admin_key)
+    eid = experiment_id or get_experiment_id()
+    pool = _get_pool()
+
+    session_row = await session_repo.get_session(pool, session_id)
+    if not session_row or session_row["experiment_id"] != eid:
+        raise HTTPException(status_code=404, detail="Session not found for this experiment")
+
+    messages = await message_repo.get_session_messages(pool, session_id)
+    saved_evaluations = await message_repo.get_manual_evaluations(pool, session_id)
+    agent_blocks = await session_repo.get_agent_blocks(pool, session_id)
+
+    async with pool.acquire() as conn:
+        event_rows = await conn.fetch(
+            """
+            SELECT id, session_id, event_type, occurred_at, data
+            FROM events
+            WHERE experiment_id = $1 AND session_id = $2
+            ORDER BY id ASC
+            """,
+            eid,
+            session_id,
+        )
+
+    sim_cfg = session_row.get("simulation_config")
+    exp_cfg = session_row.get("experimental_config")
+    if isinstance(sim_cfg, str):
+        sim_cfg = json.loads(sim_cfg)
+    if isinstance(exp_cfg, str):
+        exp_cfg = json.loads(exp_cfg)
+
+    payload = {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "session": {
+            "session_id": str(session_row["session_id"]),
+            "experiment_id": session_row["experiment_id"],
+            "token": session_row["token"],
+            "treatment_group": session_row["treatment_group"],
+            "status": session_row["status"],
+            "user_name": session_row["user_name"],
+            "participant_stance": session_row.get("participant_stance"),
+            "started_at": session_row["started_at"].isoformat() if session_row.get("started_at") else None,
+            "ended_at": session_row["ended_at"].isoformat() if session_row.get("ended_at") else None,
+            "end_reason": session_row.get("end_reason"),
+            "random_seed": session_row.get("random_seed"),
+            "simulation_config": sim_cfg,
+            "experimental_config": exp_cfg,
+            "agent_blocks": agent_blocks,
+        },
+        "messages": [
+            {
+                **msg,
+                "manual_evaluation": saved_evaluations.get(msg["message_id"]),
+            }
+            for msg in messages
+        ],
+        "events": [
+            {
+                "id": row["id"],
+                "session_id": str(row["session_id"]),
+                "event_type": row["event_type"],
+                "occurred_at": row["occurred_at"].isoformat(),
+                "data": row["data"] if isinstance(row["data"], dict) else json.loads(row["data"]),
+            }
+            for row in event_rows
+        ],
+    }
+
+    body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    headers = {
+        "Content-Disposition": f'attachment; filename="{session_id}_stage_session.json"'
+    }
+    return StreamingResponse(io.BytesIO(body), media_type="application/json; charset=utf-8", headers=headers)
+
+
+@app.put("/admin/session/{session_id}/evaluation")
+async def admin_save_session_evaluation(
+    session_id: str,
+    request: SessionEvaluationSaveRequest,
+    experiment_id: Optional[str] = None,
+    x_admin_key: str = Header(None),
+):
+    """Persist the full manual evaluation snapshot for a session."""
+    _require_admin(x_admin_key)
+    eid = experiment_id or get_experiment_id()
+    pool = _get_pool()
+
+    session_row = await session_repo.get_session(pool, session_id)
+    if not session_row or session_row["experiment_id"] != eid:
+        raise HTTPException(status_code=404, detail="Session not found for this experiment")
+
+    messages = await message_repo.get_session_messages(pool, session_id)
+    participant_name = session_row["user_name"]
+    valid_message_ids = {
+        msg["message_id"]
+        for msg in messages
+        if msg["sender"] != participant_name
+    }
+    request_ids = [row.message_id for row in request.rows]
+    unknown_ids = sorted(set(request_ids) - valid_message_ids)
+    if unknown_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Evaluation payload contains unknown or participant message ids",
+        )
+
+    await message_repo.replace_manual_evaluations(
+        pool,
+        session_id=session_id,
+        experiment_id=eid,
+        evaluations=[row.model_dump() for row in request.rows if row.message_id in valid_message_ids],
+    )
+    return {
+        "status": "ok",
+        "session_id": session_id,
+        "saved_rows": len(request.rows),
+    }
+
+
 @app.get("/admin/tokens/stats")
 async def admin_token_stats(
     experiment_id: Optional[str] = None,
@@ -1156,6 +1677,359 @@ async def admin_token_stats(
             for r in rows
         ]
     }
+
+
+@app.get("/admin/experiment/{experiment_id}/compliance")
+async def admin_experiment_compliance(experiment_id: str, x_admin_key: str = Header(None)):
+    """Return treatment fidelity stats per group for a given experiment.
+
+    Per treatment group:
+    - session_count: how many sessions exist
+    - classified_count: agent messages that were classified (is_incivil not null)
+    - incivil_count / incivil_pct: number and % of incivil agent messages
+    - like_minded_count / like_minded_pct: number and % of like-minded agent messages
+      (denominator is stance_classified_count, i.e. only messages where like-mindedness was determined)
+    """
+    _require_admin(x_admin_key)
+    pool = _get_pool()
+
+    experiment = await config_repo.get_experiment(pool, experiment_id)
+    if not experiment:
+        raise HTTPException(status_code=404, detail=f"Experiment '{experiment_id}' not found")
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT
+                s.treatment_group,
+                COUNT(DISTINCT s.session_id)                                        AS session_count,
+                COUNT(m.message_id) FILTER (WHERE m.is_incivil IS NOT NULL)         AS classified_count,
+                COUNT(m.message_id) FILTER (WHERE m.is_incivil = true)              AS incivil_count,
+                COUNT(m.message_id) FILTER (WHERE m.is_like_minded IS NOT NULL)     AS stance_classified_count,
+                COUNT(m.message_id) FILTER (WHERE m.is_like_minded = true)          AS like_minded_count
+            FROM sessions s
+            LEFT JOIN messages m
+                ON s.session_id = m.session_id
+                AND m.sender != s.user_name
+            WHERE s.experiment_id = $1
+            GROUP BY s.treatment_group
+            ORDER BY s.treatment_group
+            """,
+            experiment_id,
+        )
+
+    def _pct(num, den):
+        return round(100.0 * num / den, 1) if den > 0 else None
+
+    groups = []
+    for r in rows:
+        classified = r["classified_count"]
+        incivil = r["incivil_count"]
+        stance_classified = r["stance_classified_count"]
+        like_minded = r["like_minded_count"]
+        groups.append({
+            "group": r["treatment_group"],
+            "session_count": r["session_count"],
+            "classified_count": classified,
+            "incivil_count": incivil,
+            "incivil_pct": _pct(incivil, classified),
+            "stance_classified_count": stance_classified,
+            "like_minded_count": like_minded,
+            "like_minded_pct": _pct(like_minded, stance_classified),
+        })
+
+    return {"experiment_id": experiment_id, "groups": groups}
+
+
+@app.get("/admin/evaluations/summary-csv/{experiment_id}")
+async def admin_evaluations_summary_csv(experiment_id: str, x_admin_key: str = Header(None)):
+    """Download one summary row per session with saved manual evaluations."""
+    _require_admin(x_admin_key)
+    pool = _get_pool()
+
+    experiment = await config_repo.get_experiment(pool, experiment_id)
+    if not experiment:
+        raise HTTPException(status_code=404, detail=f"Experiment '{experiment_id}' not found")
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT
+                s.session_id,
+                s.treatment_group,
+                s.status,
+                COUNT(m.message_id) AS total_messages,
+                COUNT(ev.message_id) AS saved_rows,
+                COUNT(*) FILTER (WHERE ev.incivility) AS incivility_count,
+                COUNT(*) FILTER (WHERE ev.hate_speech) AS hate_speech_count,
+                COUNT(*) FILTER (WHERE ev.impoliteness) AS impoliteness_count,
+                COUNT(*) FILTER (WHERE ev.threats_to_dem_freedom) AS threats_to_democracy_count,
+                COUNT(*) FILTER (WHERE ev.alignment = 'like_minded') AS like_minded_count,
+                COUNT(*) FILTER (WHERE ev.alignment = 'not_like_minded') AS not_like_minded_count,
+                COUNT(*) FILTER (WHERE ev.alignment <> '') AS aligned_rows,
+                COUNT(*) FILTER (WHERE ev.human_like = 'yes') AS human_like_yes_count,
+                COUNT(*) FILTER (WHERE ev.human_like <> '') AS human_like_labeled_count,
+                COUNT(*) FILTER (WHERE btrim(COALESCE(ev.other, '')) <> '') AS other_filled_count,
+                MAX(ev.updated_at) AS last_evaluated_at
+            FROM sessions s
+            LEFT JOIN messages m
+                ON m.session_id = s.session_id
+                AND m.sender != s.user_name
+            LEFT JOIN manual_message_evaluations ev
+                ON ev.session_id = s.session_id
+                AND ev.message_id = m.message_id
+            WHERE s.experiment_id = $1
+            GROUP BY s.session_id, s.treatment_group, s.status
+            HAVING COUNT(ev.message_id) > 0
+            ORDER BY last_evaluated_at DESC NULLS LAST, s.session_id
+            """,
+            experiment_id,
+        )
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No saved evaluations found for this experiment")
+
+    def _pct(value: int, total: int) -> str:
+        return f"{(value / total) * 100:.1f}%" if total > 0 else ""
+
+    def _expected_targets_from_treatment(treatment_group: str) -> tuple[Optional[int], Optional[int]]:
+        group = (treatment_group or "").lower()
+
+        expected_incivility: Optional[int] = None
+        if "not_incivil" in group:
+            expected_incivility = 0
+        elif "incivil" in group:
+            expected_incivility = 100
+        elif "mix" in group:
+            expected_incivility = 50
+
+        expected_like_minded: Optional[int] = None
+        if "not_like_minded" in group:
+            expected_like_minded = 0
+        elif "like_minded" in group:
+            expected_like_minded = 100
+        elif "mix" in group:
+            expected_like_minded = 50
+
+        return expected_incivility, expected_like_minded
+
+    def _compliance(actual_value: int, total: int, expected_pct: Optional[int]) -> str:
+        if total <= 0 or expected_pct is None:
+            return ""
+        actual_pct = (actual_value / total) * 100.0
+        return f"{max(0.0, 100.0 - abs(actual_pct - expected_pct)):.1f}%"
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(
+        [
+            "experiment_id",
+            "experiment_description",
+            "session_id",
+            "treatment_group",
+            "session_status",
+            "saved_rows",
+            "n_messages",
+            "n_incivility",
+            "n_hate_speech",
+            "n_impoliteness",
+            "n_threats_to_democracy",
+            "n_like_minded",
+            "n_not_like_minded",
+            "perc_incivility",
+            "perc_hate_speech",
+            "perc_impoliteness",
+            "perc_threats_to_democracy",
+            "perc_like_minded",
+            "perc_not_like_minded",
+            "compliance_incivility_target",
+            "compliance_like_minded_target",
+            "compliance_human_like_target_100",
+            "n_other_filled",
+            "perc_other_filled",
+            "last_evaluated_at",
+        ]
+    )
+    for row in rows:
+        total_messages = int(row["total_messages"] or 0)
+        saved_rows = int(row["saved_rows"] or 0)
+        incivility_count = int(row["incivility_count"] or 0)
+        hate_speech_count = int(row["hate_speech_count"] or 0)
+        impoliteness_count = int(row["impoliteness_count"] or 0)
+        threats_count = int(row["threats_to_democracy_count"] or 0)
+        like_minded_count = int(row["like_minded_count"] or 0)
+        not_like_minded_count = int(row["not_like_minded_count"] or 0)
+        aligned_rows = int(row["aligned_rows"] or 0)
+        human_like_yes_count = int(row["human_like_yes_count"] or 0)
+        human_like_labeled_count = int(row["human_like_labeled_count"] or 0)
+        other_filled_count = int(row["other_filled_count"] or 0)
+        expected_incivility, expected_like_minded = _expected_targets_from_treatment(
+            str(row["treatment_group"] or "")
+        )
+        writer.writerow(
+            [
+                experiment_id,
+                experiment.get("description", ""),
+                str(row["session_id"]),
+                row["treatment_group"],
+                row["status"],
+                saved_rows,
+                total_messages,
+                incivility_count,
+                hate_speech_count,
+                impoliteness_count,
+                threats_count,
+                like_minded_count,
+                not_like_minded_count,
+                _pct(incivility_count, total_messages),
+                _pct(hate_speech_count, total_messages),
+                _pct(impoliteness_count, total_messages),
+                _pct(threats_count, total_messages),
+                _pct(like_minded_count, aligned_rows),
+                _pct(not_like_minded_count, aligned_rows),
+                _compliance(incivility_count, total_messages, expected_incivility),
+                _compliance(like_minded_count, aligned_rows, expected_like_minded),
+                _compliance(human_like_yes_count, human_like_labeled_count, 100),
+                other_filled_count,
+                _pct(other_filled_count, saved_rows),
+                row["last_evaluated_at"].isoformat() if row["last_evaluated_at"] else "",
+            ]
+        )
+
+    buf.seek(0)
+    filename = f"{experiment_id}_evaluation_summary.csv"
+    return StreamingResponse(
+        io.StringIO(buf.getvalue()),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/admin/sessions/csv/{experiment_id}")
+async def admin_sessions_csv(experiment_id: str, x_admin_key: str = Header(None)):
+    """Download all session messages for an experiment as a flat CSV."""
+    _require_admin(x_admin_key)
+    pool = _get_pool()
+
+    experiment = await config_repo.get_experiment(pool, experiment_id)
+    if not experiment:
+        raise HTTPException(status_code=404, detail=f"Experiment '{experiment_id}' not found")
+
+    async with pool.acquire() as conn:
+        session_rows = await conn.fetch(
+            """
+            SELECT
+                session_id,
+                treatment_group,
+                status,
+                started_at,
+                ended_at,
+                end_reason,
+                simulation_config,
+                experimental_config
+            FROM sessions
+            WHERE experiment_id = $1
+            ORDER BY started_at DESC NULLS LAST, session_id
+            """,
+            experiment_id,
+        )
+
+    if not session_rows:
+        raise HTTPException(status_code=404, detail="No sessions found for this experiment")
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(
+        [
+            "experiment_id",
+            "experiment_description",
+            "session_id",
+            "treatment_group",
+            "session_status",
+            "started_at",
+            "ended_at",
+            "end_reason",
+            "session_duration_minutes",
+            "messages_per_minute",
+            "evaluate_interval",
+            "action_window_size",
+            "performer_memory_size",
+            "director_model",
+            "performer_model",
+            "moderator_model",
+            "chatroom_context",
+            "ecological_validity_criteria",
+            "message_id",
+            "sender",
+            "content",
+            "sent_at",
+            "reply_to",
+            "reported",
+            "is_incivil",
+            "is_like_minded",
+            "inferred_participant_stance",
+            "classification_rationale",
+        ]
+    )
+
+    for session_row in session_rows:
+        sim_cfg = session_row["simulation_config"] or {}
+        exp_cfg = session_row["experimental_config"] or {}
+        if isinstance(sim_cfg, str):
+            sim_cfg = json.loads(sim_cfg)
+        if isinstance(exp_cfg, str):
+            exp_cfg = json.loads(exp_cfg)
+        messages = await message_repo.get_session_messages(pool, str(session_row["session_id"]))
+
+        base = [
+            experiment_id,
+            experiment.get("description", ""),
+            str(session_row["session_id"]),
+            session_row["treatment_group"],
+            session_row["status"],
+            session_row["started_at"].isoformat() if session_row["started_at"] else "",
+            session_row["ended_at"].isoformat() if session_row["ended_at"] else "",
+            session_row["end_reason"] or "",
+            sim_cfg.get("session_duration_minutes", ""),
+            sim_cfg.get("messages_per_minute", ""),
+            sim_cfg.get("evaluate_interval", ""),
+            sim_cfg.get("action_window_size", ""),
+            sim_cfg.get("performer_memory_size", ""),
+            sim_cfg.get("director_llm_model", ""),
+            sim_cfg.get("performer_llm_model", ""),
+            sim_cfg.get("moderator_llm_model", ""),
+            exp_cfg.get("chatroom_context", ""),
+            exp_cfg.get("ecological_validity_criteria", ""),
+        ]
+
+        if not messages:
+            writer.writerow(base + ["", "", "", "", "", ""])
+            continue
+
+        for msg in messages:
+            writer.writerow(
+                base
+                + [
+                    msg["message_id"],
+                    msg["sender"],
+                    msg["content"],
+                    msg["timestamp"],
+                    msg.get("reply_to") or "",
+                    "1" if msg.get("reported") else "0",
+                    msg.get("is_incivil"),
+                    msg.get("is_like_minded"),
+                    msg.get("inferred_participant_stance") or "",
+                    msg.get("classification_rationale") or "",
+                ]
+            )
+
+    buf.seek(0)
+    filename = f"{experiment_id}_sessions.csv"
+    return StreamingResponse(
+        io.StringIO(buf.getvalue()),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/admin/tokens/csv/{experiment_id}")

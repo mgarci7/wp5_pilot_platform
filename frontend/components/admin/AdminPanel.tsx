@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useState, useCallback, useEffect } from "react"
 import PassphraseGate from "./PassphraseGate"
@@ -10,7 +10,9 @@ import StepLLM, { type LLMTestResults } from "./steps/StepLLM"
 import StepTreatments from "./steps/StepTreatments"
 import StepTokens from "./steps/StepTokens"
 import StepReview from "./steps/StepReview"
-import { getMeta, saveConfig, listExperiments } from "../../lib/admin-api"
+import { getMeta, saveConfig, updateConfig, listExperiments, getExperimentConfig } from "../../lib/admin-api"
+import { createExperimental3x3Preset } from "../../lib/treatment-presets"
+import { generateDefaultAgentNames, normalizeAgentNames } from "../../lib/agent-name-options"
 import type {
   SimulationConfig,
   ExperimentalConfig,
@@ -21,7 +23,7 @@ import type {
 type View = "dashboard" | "wizard"
 export type AdminTheme = "light" | "dark"
 
-// ── Frontend-owned defaults ─────────────────────────────────────────────────
+// â”€â”€ Frontend-owned defaults â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // These are the starting values for a new experiment wizard.
 // The backend validates; the frontend provides sensible defaults.
 
@@ -29,7 +31,8 @@ const DEFAULT_SIMULATION: SimulationConfig = {
   random_seed: 42,
   session_duration_minutes: 5,
   num_agents: 5,
-  agent_names: ["", "", "", "", ""],
+  agent_names: generateDefaultAgentNames(5),
+  agent_personas: [],
   messages_per_minute: 6,
   director_llm_provider: "anthropic",
   director_llm_model: "claude-haiku-4-5",
@@ -40,27 +43,71 @@ const DEFAULT_SIMULATION: SimulationConfig = {
   performer_llm_model: "mistral-large-latest",
   performer_temperature: 0.8,
   performer_top_p: 0.8,
-  performer_max_tokens: 256,
+  performer_max_tokens: 384,
   moderator_llm_provider: "anthropic",
   moderator_llm_model: "claude-haiku-4-5",
   moderator_temperature: 0.2,
   moderator_top_p: 1.0,
-  moderator_max_tokens: 256,
+  moderator_max_tokens: 512,
+  classifier_llm_provider: "anthropic",
+  classifier_llm_model: "claude-haiku-4-5",
+  classifier_temperature: 0.2,
+  classifier_top_p: 1.0,
+  classifier_max_tokens: 256,
   evaluate_interval: 5,
   action_window_size: 5,
   performer_memory_size: 3,
+  parallel_turns: 1,
+  agent_mode: "prompt",
 }
 
-const DEFAULT_EXPERIMENTAL: ExperimentalConfig = {
-  chatroom_context: "",
-  ecological_validity_criteria: "The conversation should be dialogic: agents should react to the state of the conversation, rather than talking past each other. There should be a mix of action types: approx. 30% message, 30% likes, 20% replies, 20% @mentions. Messages must be short (1-2 sentences, under 30 words) — brief, punchy contributions like in a real group chat. Tone and style should vary, with some containing emojis or punctuation. Messages should be 'reddit-like': informal, self-aware, and sometimes include internet humour, slang, and abbreviations.",
-  redirect_url: "",
-  groups: {
-    condition_1: { features: [], internal_validity_criteria: "" },
-  },
-}
+const DEFAULT_EXPERIMENTAL: ExperimentalConfig = createExperimental3x3Preset()
 
 const DEFAULT_TOKENS: TokenConfig = { groups: {} }
+
+function getDefaultExperimentalConfig(): ExperimentalConfig {
+  return {
+    ...DEFAULT_EXPERIMENTAL,
+    agent_pool: DEFAULT_EXPERIMENTAL.agent_pool
+      ? DEFAULT_EXPERIMENTAL.agent_pool.map((agent) => ({ ...agent }))
+      : undefined,
+    groups: Object.fromEntries(
+      Object.entries(DEFAULT_EXPERIMENTAL.groups).map(([name, group]) => [
+        name,
+        {
+          ...group,
+          features: [...(group.features ?? [])],
+          seed: group.seed ? { ...group.seed } : undefined,
+        },
+      ])
+    ),
+  }
+}
+
+function normalizeSimulationConfig(config: SimulationConfig): SimulationConfig {
+  const numAgents = Math.max(0, config.num_agents ?? config.agent_names?.length ?? 0)
+  const personas = [...(config.agent_personas || [])]
+  while (personas.length < numAgents) personas.push("")
+  personas.length = numAgents
+
+  return {
+    ...config,
+    num_agents: numAgents,
+    agent_names: normalizeAgentNames(numAgents, config.agent_names || []),
+    agent_personas: personas,
+  }
+}
+
+function normalizeExperimentalConfig(config: ExperimentalConfig): ExperimentalConfig {
+  return {
+    ...config,
+    chatroom_context: config.chatroom_context ?? "",
+    incivility_framework: config.incivility_framework ?? "",
+    ecological_validity_criteria: config.ecological_validity_criteria ?? "",
+    redirect_url: config.redirect_url ?? "",
+    groups: config.groups ?? {},
+  }
+}
 
 /** Format a Date as a `datetime-local` input value (YYYY-MM-DDTHH:MM). */
 function toLocalDatetimeString(d: Date): string {
@@ -94,7 +141,7 @@ export default function AdminPanel() {
     })
   }, [])
 
-  // Auth — persist in sessionStorage so it survives refresh but clears on tab close
+  // Auth â€” persist in sessionStorage so it survives refresh but clears on tab close
   const [adminKey, setAdminKey] = useState("")
   const [authenticated, setAuthenticated] = useState(false)
   const [restoringSession, setRestoringSession] = useState(true)
@@ -119,9 +166,9 @@ export default function AdminPanel() {
   const [startsAt, setStartsAt] = useState(() => defaultSchedule().startsAt)
   const [endsAt, setEndsAt] = useState(() => defaultSchedule().endsAt)
 
-  // Config state — initialized with frontend defaults for new experiments
+  // Config state â€” initialized with frontend defaults for new experiments
   const [simulation, setSimulation] = useState<SimulationConfig>(DEFAULT_SIMULATION)
-  const [experimental, setExperimental] = useState<ExperimentalConfig>(DEFAULT_EXPERIMENTAL)
+  const [experimental, setExperimental] = useState<ExperimentalConfig>(getDefaultExperimentalConfig())
   const [tokens, setTokens] = useState<TokenConfig>(DEFAULT_TOKENS)
   const [meta, setMeta] = useState<AdminMeta | null>(null)
 
@@ -136,7 +183,9 @@ export default function AdminPanel() {
     director: false,
     performer: false,
     moderator: false,
+    classifier: false,
   })
+  const [editingExperimentId, setEditingExperimentId] = useState<string | null>(null)
 
   // Save state
   const [saving, setSaving] = useState(false)
@@ -177,40 +226,53 @@ export default function AdminPanel() {
     setSimulation((prev) => ({ ...prev, ...updates }))
   }, [])
 
-  const handleLlmTestResult = useCallback((role: "director" | "performer" | "moderator", ok: boolean) => {
+  const handleLlmTestResult = useCallback((role: "director" | "performer" | "moderator" | "classifier", ok: boolean) => {
     setLlmTestResults((prev) => ({ ...prev, [role]: ok }))
   }, [])
 
   const handleSave = useCallback(async () => {
-    if (!simulation || !experimental || !tokens) return
+    if (!simulation || !experimental) return
     setSaving(true)
     setSaveBanner(null)
     setSaveError("")
     try {
-      await saveConfig(adminKey, {
-        simulation,
-        experimental,
-        tokens,
-        experiment_id: experimentId,
-        description,
-        starts_at: startsAt ? new Date(startsAt).toISOString() : null,
-        ends_at: endsAt ? new Date(endsAt).toISOString() : null,
-      })
-      setSaveBanner(`Experiment "${experimentId}" saved and activated. Participants can now join.`)
+      if (editingExperimentId) {
+        await updateConfig(adminKey, editingExperimentId, {
+          simulation,
+          experimental,
+          description,
+          starts_at: startsAt ? new Date(startsAt).toISOString() : null,
+          ends_at: endsAt ? new Date(endsAt).toISOString() : null,
+        })
+        setSaveBanner(`Experiment "${editingExperimentId}" updated successfully.`)
+        setEditingExperimentId(null)
+      } else {
+        if (!tokens) return
+        await saveConfig(adminKey, {
+          simulation,
+          experimental,
+          tokens,
+          experiment_id: experimentId,
+          description,
+          starts_at: startsAt ? new Date(startsAt).toISOString() : null,
+          ends_at: endsAt ? new Date(endsAt).toISOString() : null,
+        })
+        setSaveBanner(`Experiment "${experimentId}" saved and activated. Participants can now join.`)
+      }
       setView("dashboard")
       setStep(0)
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Save failed")
     }
     setSaving(false)
-  }, [adminKey, simulation, experimental, tokens, experimentId, description, startsAt, endsAt])
+  }, [adminKey, simulation, experimental, tokens, experimentId, editingExperimentId, description, startsAt, endsAt])
 
-  // Per-step validation — returns error message or null if valid
+  // Per-step validation â€” returns error message or null if valid
   const validateStep = useCallback((s: number): string | null => {
     switch (s) {
       case 0: {
         if (!experimentId.trim()) return "Experiment ID is required."
-        if (existingExperimentIds.has(experimentId.trim()))
+        if (!editingExperimentId && existingExperimentIds.has(experimentId.trim()))
           return "An experiment with this ID already exists. Choose a different ID."
         if (!description.trim()) return "Description is required."
         if (startsAt && endsAt && new Date(endsAt) <= new Date(startsAt))
@@ -234,7 +296,7 @@ export default function AdminPanel() {
         return null
       }
       case 2: {
-        for (const role of ["director", "performer", "moderator"] as const) {
+        for (const role of ["director", "performer", "moderator", "classifier"] as const) {
           const model = simulation[`${role}_llm_model` as keyof typeof simulation] as string
           if (!model.trim()) return `${role.charAt(0).toUpperCase() + role.slice(1)} model is required.`
         }
@@ -266,6 +328,7 @@ export default function AdminPanel() {
         return null
       }
       case 4: {
+        if (editingExperimentId) return null
         const groupNames = Object.keys(experimental.groups)
         if (groupNames.length === 0) return "Define treatment groups first."
         const totalTokens = Object.values(tokens.groups).reduce((sum, arr) => sum + arr.length, 0)
@@ -280,12 +343,12 @@ export default function AdminPanel() {
       default:
         return null
     }
-  }, [experimentId, existingExperimentIds, description, startsAt, endsAt, simulation, experimental, tokens, llmTestResults])
+  }, [experimentId, existingExperimentIds, editingExperimentId, description, startsAt, endsAt, simulation, experimental, tokens, llmTestResults])
 
   const handleOpenWizard = useCallback(() => {
     // Reset wizard to fresh defaults for a new experiment
     setSimulation({ ...DEFAULT_SIMULATION })
-    setExperimental({ ...DEFAULT_EXPERIMENTAL, redirect_url: "", groups: { condition_1: { features: [], internal_validity_criteria: "" } } })
+    setExperimental(getDefaultExperimentalConfig())
     setTokens({ ...DEFAULT_TOKENS })
     setExperimentId("")
     setDescription("")
@@ -293,7 +356,8 @@ export default function AdminPanel() {
     setStartsAt(sched.startsAt)
     setEndsAt(sched.endsAt)
     setSessionTouched(false)
-    setLlmTestResults({ director: false, performer: false, moderator: false })
+    setLlmTestResults({ director: false, performer: false, moderator: false, classifier: false })
+    setEditingExperimentId(null)
     setSaveBanner(null)
     setSaveError("")
     setStep(0)
@@ -306,8 +370,54 @@ export default function AdminPanel() {
     }
   }, [adminKey])
 
+  const handleEditExperiment = useCallback(async (expId: string) => {
+    try {
+      const { config, description: desc, starts_at, ends_at } = await getExperimentConfig(adminKey, expId)
+      setSimulation(normalizeSimulationConfig(config.simulation))
+      setExperimental(normalizeExperimentalConfig(config.experimental))
+      setExperimentId(expId)
+      setDescription(desc || "")
+      setStartsAt(starts_at ? starts_at.slice(0, 16) : "")
+      setEndsAt(ends_at ? ends_at.slice(0, 16) : "")
+      setEditingExperimentId(expId)
+      setTokens({ groups: {} })
+      setSessionTouched(false)
+      setLlmTestResults({ director: true, performer: true, moderator: true, classifier: true })
+      setSaveBanner(null)
+      setSaveError("")
+      setStep(0)
+      setView("wizard")
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Failed to load experiment")
+    }
+  }, [adminKey])
+
+  const handleDuplicateExperiment = useCallback(async (expId: string) => {
+    try {
+      const { config, description: desc, starts_at, ends_at } = await getExperimentConfig(adminKey, expId)
+      const copyId = `${expId}_copy_${Date.now()}`
+      setSimulation(normalizeSimulationConfig(config.simulation))
+      setExperimental(normalizeExperimentalConfig(config.experimental))
+      setExperimentId(copyId)
+      setDescription(desc ? `${desc} (copy)` : `Copy of ${expId}`)
+      setStartsAt(starts_at ? starts_at.slice(0, 16) : "")
+      setEndsAt(ends_at ? ends_at.slice(0, 16) : "")
+      setEditingExperimentId(null)
+      setTokens({ groups: {} })
+      setSessionTouched(false)
+      setLlmTestResults({ director: true, performer: true, moderator: true, classifier: true })
+      setSaveBanner(null)
+      setSaveError("")
+      setStep(0)
+      setView("wizard")
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Failed to duplicate experiment")
+    }
+  }, [adminKey])
+
   const handleBackToDashboard = useCallback(() => {
     setView("dashboard")
+    setEditingExperimentId(null)
   }, [])
 
   if (!authenticated) {
@@ -360,6 +470,8 @@ export default function AdminPanel() {
         <Dashboard
           adminKey={adminKey}
           onOpenWizard={handleOpenWizard}
+          onEditExperiment={handleEditExperiment}
+          onDuplicateExperiment={handleDuplicateExperiment}
           saveBanner={saveBanner}
           onDismissBanner={() => setSaveBanner(null)}
           theme={theme}
@@ -386,6 +498,7 @@ export default function AdminPanel() {
       redirectUrl={experimental.redirect_url}
       setRedirectUrl={(v) => setExperimental((prev) => ({ ...prev, redirect_url: v }))}
       adminKey={adminKey}
+      isEditing={!!editingExperimentId}
     />,
     <StepSession
       key="session"
@@ -408,6 +521,10 @@ export default function AdminPanel() {
       config={experimental}
       onChange={setExperimental}
       availableFeatures={meta.available_features}
+      agentMode={simulation.agent_mode ?? "prompt"}
+      humanizeEnabled={!!simulation.humanize_output}
+      humanizePerAgent={simulation.humanize_per_agent}
+      onHumanizePerAgentChange={(perAgent) => handleSimChange({ humanize_per_agent: perAgent })}
     />,
     <StepTokens
       key="tokens"
@@ -424,7 +541,6 @@ export default function AdminPanel() {
       simulation={simulation}
       experimental={experimental}
       tokens={tokens}
-      saving={saving}
       saveResult=""
       saveError={saveError}
     />,
@@ -447,3 +563,4 @@ export default function AdminPanel() {
     </div>
   )
 }
+
