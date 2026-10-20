@@ -10,6 +10,7 @@ import json
 import random
 import pytest
 from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import patch
 
 from models.message import Message
 from models.agent import Agent
@@ -64,6 +65,95 @@ def _make_logger():
     logger.log_llm_call = MagicMock()
     logger.log_event = MagicMock()
     return logger
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selected", ["Alice", "Bob", "Carol"])
+async def test_dimensions_are_drawn_before_director_and_reused_by_selected_performer(selected):
+    state = _make_state(agents=[Agent(name=name) for name in ("Alice", "Bob", "Carol")])
+    orch, _ = _make_orchestrator(state=state, agent_traits={
+        "Alice": {"incivility": "uncivil"},
+        "Bob": {"incivility": "civil"},
+        "Carol": {"incivility": "uncivil"},
+    })
+    performer_retry = selected == "Alice"
+
+    async def director_response(prompt, **kwargs):
+        if "## Preassigned Incivility Dimensions For This Turn" not in prompt:
+            return _evaluate_json()
+        assert draw.call_count == 2
+        assignments = prompt.split("## Preassigned Incivility Dimensions For This Turn")[1]
+        assert "- Alice: Threats to Democratic Freedoms" in assignments
+        assert "- Carol: Hate Speech and Stereotyping" in assignments
+        assert "- Bob:" not in assignments
+        return _action_json(next_performer=selected)
+
+    orch.director_llm.generate_response.side_effect = director_response
+    orch.performer_llm.generate_response.side_effect = (
+        [None, "This argument makes no sense."] if performer_retry
+        else ["This argument makes no sense."]
+    )
+    with patch("agents.STAGE.orchestrator.select_incivility_dimensions",
+               side_effect=[["democratic_threats"], ["hate_speech"]]) as draw:
+        result = await orch.execute_turn("criteria_A")
+        assert draw.call_count == 2
+
+    assert result is not None and result.message is not None
+    assert result.agent_name == selected
+    assert orch.director_llm.generate_response.await_count == 2  # Evaluate + Action, no extra call.
+    prompts = [call.args[0] for call in orch.performer_llm.generate_response.call_args_list]
+    for prompt in prompts:
+        assert ("- **Threats to Democratic Freedoms**:" in prompt) == (selected == "Alice")
+        assert ("- **Hate Speech and Stereotyping**:" in prompt) == (selected == "Carol")
+        assert ("## Incivility Requirements:" in prompt) == (selected != "Bob")
+    if performer_retry:
+        assert prompts[0] == prompts[1]
+
+
+@pytest.mark.asyncio
+async def test_dimensions_are_only_drawn_for_eligible_uncivil_candidates():
+    state = _make_state(agents=[Agent(name=name) for name in ("Alice", "Bob", "Carol")])
+    orch, _ = _make_orchestrator(state=state, agent_traits={
+        "Alice": {"incivility": "uncivil"},
+        "Bob": {"incivility": "civil"},
+        "Carol": {"incivility": "uncivil"},
+    })
+    orch.director_llm.generate_response.side_effect = [
+        _evaluate_json(), _action_json(next_performer="Carol"),
+    ]
+    orch.performer_llm.generate_response.return_value = "This argument makes no sense."
+    with patch("agents.STAGE.orchestrator.select_incivility_dimensions",
+               return_value=["democratic_threats"]) as draw:
+        result = await orch.execute_turn("criteria_A", allowed_performers={"Bob", "Carol"})
+        draw.assert_called_once_with(orch._rng)
+    assert result is not None and result.message is not None
+    action_prompt = orch.director_llm.generate_response.call_args.args[0]
+    assignment_section = action_prompt.split("## Preassigned Incivility Dimensions For This Turn")[1]
+    assert "- Carol: Threats to Democratic Freedoms" in assignment_section
+    assert "- Alice:" not in assignment_section
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("custom_template,boosted", [
+    (None, False),
+    (None, True),
+    ("{#SYSTEM}Custom system{/SYSTEM}{#USER}Custom action{/USER}", False),
+])
+async def test_director_retries_keep_dimension_assignments_with_default_and_custom_prompts(custom_template, boosted):
+    orch, _ = _make_orchestrator(agent_traits={"Alice": {"incivility": "uncivil"}})
+    orch.director_action_prompt_template = custom_template
+    orch.boost_replies_mentions = boosted
+    orch.director_llm.generate_response.side_effect = ["not json", _action_json()]
+    result = await orch._director_action(
+        recent=[],
+        dimensions_by_performer={"Alice": ["democratic_threats"], "Excluded": ["hate_speech"]},
+    )
+    assert result is not None
+    prompts = [call.args[0] for call in orch.director_llm.generate_response.call_args_list]
+    assert len(prompts) == 2
+    assert prompts[0] == prompts[1]
+    assert "- Alice: Threats to Democratic Freedoms" in prompts[0]
+    assert "- Excluded:" not in prompts[0]
 
 
 def _make_orchestrator(
@@ -1038,6 +1128,7 @@ class TestExecuteTurnMessage:
         state = _make_state(
             participant_stance_hint="pro_policy_pro_topic",
             agents=[Agent(name="Alice"), Agent(name="Bob")],
+            simulation_config={"participant_target_reply_probability": 1.0},
         )
         participant_msg = Message.create(
             sender="participant",

@@ -32,6 +32,7 @@ from agents.STAGE.director import (
     format_target_constraints_by_speaker,
 )
 from agents.STAGE.performer import (
+    INCIVILITY_DIMENSIONS,
     build_performer_system_prompt,
     build_performer_user_prompt,
     build_incivility_instruction_block,
@@ -1992,11 +1993,18 @@ class Orchestrator:
         if auto_like is not None:
             return auto_like
 
+        # Keep assignments local to this turn, including parallel pipelines and retries.
+        dimensions_by_performer = {
+            name: select_incivility_dimensions(self._rng)
+            for name in sorted(filtered_allowed_real)
+            if name != self.state.user_name and self._agent_civility_bucket(name) == "uncivil"
+        }
         action_data = await self._director_action(
             recent_action,
             real_recent=recent_action,
             override_profiles=action_profiles,
             override_perf_counts=action_perf_counts,
+            dimensions_by_performer=dimensions_by_performer,
         )
         if action_data is None:
             return None
@@ -2686,7 +2694,7 @@ class Orchestrator:
         performer_user_prompt = base_performer_user_prompt
 
         if self._agent_civility_bucket(agent_name) == "uncivil":
-            selected_dims = select_incivility_dimensions(self._rng)
+            selected_dims = dimensions_by_performer.get(agent_name, [])
             incivility_instructions = build_incivility_instruction_block(selected_dims)
             if incivility_instructions:
                 performer_user_prompt = performer_user_prompt.rstrip() + "\n\n" + incivility_instructions
@@ -3191,6 +3199,7 @@ class Orchestrator:
         real_recent: Optional[List[Message]] = None,
         override_profiles: Optional[Dict[str, str]] = None,
         override_perf_counts: Optional[Dict[str, int]] = None,
+        dimensions_by_performer: Optional[Dict[str, List[str]]] = None,
     ) -> Optional[dict]:
         """Run Director Action call: select performer, action type, O/M/D.
 
@@ -3279,6 +3288,42 @@ class Orchestrator:
             agent_traits=anon_traits,
             template=action_template,
         )
+
+        assigned_dimensions = {
+            name: dims for name, dims in (dimensions_by_performer or {}).items()
+            if name in profiles and name != self.state.user_name and dims
+        }
+        if assigned_dimensions:
+            assignments = "\n".join(
+                f"- {name}: " + ", ".join(INCIVILITY_DIMENSIONS[dim]["title"] for dim in dims)
+                for name, dims in sorted(assigned_dimensions.items())
+            )
+            referenced_dims = [
+                dim for dim in INCIVILITY_DIMENSIONS
+                if any(dim in dims for dims in assigned_dimensions.values())
+            ]
+            dimension_reference = "\n\n".join(
+                f"- **{INCIVILITY_DIMENSIONS[dim]['title']}**:\n"
+                f"  {INCIVILITY_DIMENSIONS[dim]['definition']}\n"
+                f"  Examples: {INCIVILITY_DIMENSIONS[dim]['examples']}"
+                for dim in referenced_dims
+            )
+            action_user += (
+                "\n\n## Preassigned Incivility Dimensions For This Turn\n"
+                "Each listed candidate already has fixed dimensions for this turn. "
+                "Choose the speaker using the existing treatment and conversational priorities, "
+                "not to avoid a dimension. If you choose a listed speaker to write a message, "
+                "make their objective, motivation, and directive compatible with ALL dimensions "
+                "assigned to that speaker. Integrate them into the conversational move; do not "
+                "replace them with generic rudeness or ask the speaker to omit them. "
+                "The Performer will receive the same assignment; no new draw occurs after selection. "
+                "Do not apply another candidate's assignment or make a civil speaker uncivil. "
+                "Safety rules, participant protection, and fixed stance still take precedence.\n\n"
+                + assignments
+                + "\n\nReference definitions and examples follow. Only the dimensions listed beside "
+                "the chosen speaker above are required, not every dimension in this reference.\n"
+                + dimension_reference
+            )
 
         valid_direct_targets_by_speaker: Dict[str, Set[str]] = {}
         all_agent_target_labels = {
